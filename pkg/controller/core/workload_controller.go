@@ -254,14 +254,27 @@ func (r *WorkloadReconciler) logger() logr.Logger {
 // +kubebuilder:rbac:groups=resource.k8s.io,resources=deviceclasses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=resource.k8s.io,resources=resourceslices,verbs=get;list;watch
 
-func (r *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
+	log := ctrl.LoggerFrom(ctx)
 	var wl kueue.Workload
-	if err := r.client.Get(ctx, req.NamespacedName, &wl); err != nil {
+	var getErr error
+	wlKey := workload.NewReference(req.Namespace, req.Name)
+	defer func() {
+		if features.Enabled(features.UnadmittedWorkloadsObservability) {
+			if getErr == nil && retErr == nil {
+				r.queues.UpdateUnadmittedWorkload(log, &wl)
+			} else if apierrors.IsNotFound(getErr) {
+				r.queues.RemoveUnadmittedWorkload(log, wlKey)
+			}
+		}
+	}()
+
+	getErr = r.client.Get(ctx, req.NamespacedName, &wl)
+	if getErr != nil {
 		// we'll ignore not-found errors, since there is nothing to do.
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return ctrl.Result{}, client.IgnoreNotFound(getErr)
 	}
 
-	log := ctrl.LoggerFrom(ctx)
 	log.V(2).Info("Reconcile Workload")
 
 	if isOrphanedWorkload(&wl) {
@@ -1331,7 +1344,8 @@ func (r *WorkloadReconciler) Update(e event.TypedUpdateEvent[*kueue.Workload]) b
 	case prevStatus == workload.StatusPending && status == workload.StatusPending:
 		switch {
 		case onHold:
-			log.V(2).Info("Skipping queue update for workload on hold")
+			log.V(2).Info("Removing workload from queue because it is on-hold")
+			r.queues.DeleteWorkload(log, wlKey)
 		case dra.NeedsDRAReconcile(e.ObjectNew, r.draBackedResources):
 			log.V(2).Info("Skipping queue update for DRA workload - handled in Reconcile")
 		default:
@@ -1434,9 +1448,9 @@ func (r *WorkloadReconciler) updateAfsConsumedUsage(log logr.Logger, wl *kueue.W
 		if !found {
 			lastUpdate = now
 		}
-		// A concurrent writer can stamp a LastUpdate later than now; clamp the
-		// elapsed time so alpha stays within [0, 1], and keep the stored
-		// timestamp monotonic so the next decay does not over-elapse.
+		// Clamp elapsed and keep the stored timestamp monotonic against a
+		// concurrent writer stamping a future LastUpdate; see the canonical note
+		// in reconcileConsumedUsage (localqueue_controller.go).
 		elapsed := max(0, now.Sub(lastUpdate).Seconds())
 		storedLastUpdate := now
 		if lastUpdate.After(now) {

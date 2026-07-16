@@ -491,6 +491,59 @@ func TestUpdateSkipsRequeueForOnHoldWorkload(t *testing.T) {
 	}
 }
 
+func TestUpdateRemovesStaleQueueEntryForOnHoldWorkload(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	fakeClock := testingclock.NewFakeClock(now)
+
+	oldWl := utiltestingapi.MakeWorkload("wl", "ns").
+		Queue("lq").
+		Active(true).
+		Request(corev1.ResourceCPU, "1").
+		Obj()
+	newWl := utiltestingapi.MakeWorkload("wl", "ns").
+		Queue("lq").
+		Active(true).
+		Request(corev1.ResourceCPU, "1").
+		Condition(metav1.Condition{
+			Type:    kueue.WorkloadQuotaReserved,
+			Status:  metav1.ConditionFalse,
+			Reason:  kueue.WorkloadOnHold,
+			Message: "StatefulSet scaled to zero; workload on hold",
+		}).
+		Obj()
+
+	cl := utiltesting.NewClientBuilder().Build()
+	recorder := &utiltesting.EventRecorder{}
+	cqCache := schdcache.New(cl)
+	qManager := qcache.NewManagerForUnitTests(cl, cqCache,
+		qcache.WithClock(fakeClock),
+		qcache.WithPreemptionExpectations(preemptexpectations.New()))
+	reconciler := NewWorkloadReconciler(cl, qManager, cqCache, recorder)
+
+	ctx, log := utiltesting.ContextWithLog(t)
+
+	setupClusterQueue(ctx, t, cl, qManager, cqCache, utiltestingapi.MakeClusterQueue("cq").Obj(), false)
+	setupLocalQueue(ctx, t, cl, qManager, utiltestingapi.MakeLocalQueue("lq", "ns").ClusterQueue("cq").Obj(), false)
+
+	if err := qManager.AddOrUpdateWorkload(log, oldWl); err != nil {
+		t.Fatalf("AddOrUpdateWorkload() error = %v", err)
+	}
+	if pending := qManager.PendingWorkloadsInfo("cq"); len(pending) != 1 {
+		t.Fatalf("expected one pending workload before update, got %d", len(pending))
+	}
+
+	if got := reconciler.Update(event.TypedUpdateEvent[*kueue.Workload]{
+		ObjectOld: oldWl,
+		ObjectNew: newWl,
+	}); !got {
+		t.Fatalf("Update() = %v, want true", got)
+	}
+
+	if pending := qManager.PendingWorkloadsInfo("cq"); len(pending) != 0 {
+		t.Fatalf("expected no workloads in pending queue, got %d", len(pending))
+	}
+}
+
 func TestReconcile(t *testing.T) {
 	// the clock is primarily used with second rounded times
 	// use the current time trimmed.
@@ -2133,6 +2186,8 @@ func TestUpdateAfsConsumedUsage(t *testing.T) {
 		initialEntry        *queueafs.ConsumedResourcesEntry
 		wantCPUMilli        int64
 		wantStatusAccounted bool
+		// wantLastUpdate defaults to now when zero.
+		wantLastUpdate time.Time
 	}{
 		"creates a penalty-only entry on a cache miss": {
 			// StatusAccounted must start false so the LocalQueue seed can still
@@ -2148,6 +2203,21 @@ func TestUpdateAfsConsumedUsage(t *testing.T) {
 			},
 			wantCPUMilli:        10_000,
 			wantStatusAccounted: true,
+		},
+		"clamps a future LastUpdate and keeps the timestamp monotonic": {
+			// A concurrent writer stamped a LastUpdate later than now. The
+			// elapsed time must clamp to 0 so alpha stays within [0, 1]: the old
+			// usage is kept verbatim and only the 2 CPU penalty folds in (8+2=10),
+			// instead of the negative-elapsed path inflating it. The stored
+			// timestamp stays monotonic at the later value rather than rewinding.
+			initialEntry: &queueafs.ConsumedResourcesEntry{
+				Resources:       corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("8")},
+				LastUpdate:      now.Add(5 * time.Minute),
+				StatusAccounted: true,
+			},
+			wantCPUMilli:        10_000,
+			wantStatusAccounted: true,
+			wantLastUpdate:      now.Add(5 * time.Minute),
 		},
 	}
 	for name, tc := range cases {
@@ -2192,8 +2262,12 @@ func TestUpdateAfsConsumedUsage(t *testing.T) {
 			if gotCPU.MilliValue() != tc.wantCPUMilli {
 				t.Errorf("unexpected consumed CPU: want %dm, got %dm", tc.wantCPUMilli, gotCPU.MilliValue())
 			}
-			if !gotEntry.LastUpdate.Equal(now) {
-				t.Errorf("unexpected LastUpdate: want %v, got %v", now, gotEntry.LastUpdate)
+			wantLastUpdate := tc.wantLastUpdate
+			if wantLastUpdate.IsZero() {
+				wantLastUpdate = now
+			}
+			if !gotEntry.LastUpdate.Equal(wantLastUpdate) {
+				t.Errorf("unexpected LastUpdate: want %v, got %v", wantLastUpdate, gotEntry.LastUpdate)
 			}
 			if gotEntry.StatusAccounted != tc.wantStatusAccounted {
 				t.Errorf("unexpected StatusAccounted: want %t, got %t", tc.wantStatusAccounted, gotEntry.StatusAccounted)
