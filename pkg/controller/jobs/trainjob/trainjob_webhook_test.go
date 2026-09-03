@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/component-base/featuregate"
-	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 	jobsetapi "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
@@ -57,7 +57,7 @@ func TestValidateCreate(t *testing.T) {
 	testTrainJob := testingtrainjob.MakeTrainJob("trainjob", "ns").RuntimeRef(kftrainerapi.RuntimeRef{
 		APIGroup: new(kftrainerapi.GroupVersion.Group),
 		Name:     "testCtr",
-		Kind:     ptr.To(kftrainerapi.ClusterTrainingRuntimeKind),
+		Kind:     new(kftrainerapi.ClusterTrainingRuntimeKind),
 	}).Suspend(false)
 	testcases := map[string]struct {
 		clusterTrainingRuntime  *kftrainerapi.ClusterTrainingRuntime
@@ -176,10 +176,13 @@ func TestValidateCreate(t *testing.T) {
 			}
 			recorder := &utiltesting.EventRecorder{}
 			_, _ = NewReconciler(ctx, kClient, indexer, recorder)
-			_, gotErr := webhook.ValidateCreate(ctx, tc.trainJob)
+			warns, gotErr := webhook.ValidateCreate(ctx, tc.trainJob)
 
 			if diff := cmp.Diff(tc.wantErr, gotErr); diff != "" {
-				t.Errorf("validateCreate() mismatch (-want +got):\n%s", diff)
+				t.Errorf("validateCreate() errors mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(admission.Warnings(nil), warns); diff != "" {
+				t.Errorf("validateCreate() warnings mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -297,6 +300,7 @@ func TestDefault(t *testing.T) {
 			}
 
 			webhook := &TrainJobWebhook{
+				client:                     kClient,
 				manageJobsWithoutQueueName: tc.manageJobsWithoutQueueName,
 				queues:                     queueManager,
 				cache:                      cqCache,

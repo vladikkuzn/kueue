@@ -93,6 +93,13 @@ and passing the readiness probe) within the specified time. If the timeout
 is exceeded, then the workload is evicted.</p>
 </td>
 </tr>
+<tr><td><code>quotaReleaseStrategy</code><br/>
+<a href="#config-kueue-x-k8s-io-v1beta2-QuotaReleaseStrategy"><code>QuotaReleaseStrategy</code></a>
+</td>
+<td>
+   <p>QuotaReleaseStrategy provides configuration options for controlling quota release timing.</p>
+</td>
+</tr>
 <tr><td><code>clientConnection</code> <B>[Required]</B><br/>
 <a href="#config-kueue-x-k8s-io-v1beta2-ClientConnection"><code>ClientConnection</code></a>
 </td>
@@ -505,8 +512,8 @@ metrics will be reported.</p>
 </td>
 <td>
    <p>CustomLabels is a list of entries whose values will be added as extra
-Prometheus labels on ClusterQueue, LocalQueue, and Cohort metrics.
-Requires the CustomMetricLabels feature gate.</p>
+Prometheus labels on supported metrics.
+A maximum of 6 labels are allowed per SourceKind (2 for Workloads), with up to 20 labels defined in total.</p>
 </td>
 </tr>
 <tr><td><code>localQueueMetrics</code><br/>
@@ -540,9 +547,10 @@ as a Prometheus metric label with a &quot;custom_&quot; prefix.</p>
 <code>string</code>
 </td>
 <td>
-   <p>Name is used as a suffix to build the Prometheus label: Kueue
-automatically prepends &quot;custom_&quot; (e.g., name: &quot;team&quot; becomes label &quot;custom_team&quot;).
-Must follow Prometheus label naming conventions: [a-zA-Z_][a-zA-Z0-9_]*.</p>
+   <p>Name is the Prometheus metric label name suffix.
+Prepended with &quot;custom_&quot; to form the full Prometheus label name
+(e.g., &quot;team&quot; becomes &quot;custom_team&quot;).
+Must contain only [a-zA-Z0-9_] characters and start with a letter.</p>
 </td>
 </tr>
 <tr><td><code>sourceLabelKey</code><br/>
@@ -562,6 +570,32 @@ If neither is specified, defaults to Name.</p>
    <p>SourceAnnotationKey is the Kubernetes annotation key to read the value from.
 Must be a valid Kubernetes qualified name.
 Mutually exclusive with SourceLabelKey.</p>
+</td>
+</tr>
+<tr><td><code>sourceKind</code><br/>
+<a href="#config-kueue-x-k8s-io-v1beta2-SourceKind"><code>SourceKind</code></a>
+</td>
+<td>
+   <p>SourceKind is the object kind from which the label value should be sourced.
+Up to 2 labels are allowed for Workloads and up to 6 for other source kinds.
+Defaults to ClusterQueue.
+The possible values are:</p>
+<ul>
+<li>Cohort</li>
+<li>LocalQueue</li>
+<li>ClusterQueue</li>
+<li>Workload</li>
+</ul>
+</td>
+</tr>
+<tr><td><code>trackedValues</code><br/>
+<code>[]string</code>
+</td>
+<td>
+   <p>TrackedValues is a list of the label's allowed values.
+When SourceKind is Workload, a closed list of 1-12 TrackedValues is required.
+Non-workload source kinds can have 0-16 TrackedValues. If the list is empty, any value is allowed.
+Label values not allowed by this field will be reported as &quot;kueue.x-k8s.io/<em>UNTRACKED_VALUE</em>&quot;.</p>
 </td>
 </tr>
 </tbody>
@@ -612,6 +646,55 @@ must be named tls.key and tls.crt, respectively.</p>
 </tbody>
 </table>
 
+## `DeviceClassCapacitySource`     {#config-kueue-x-k8s-io-v1beta2-DeviceClassCapacitySource}
+    
+
+**Appears in:**
+
+- [DeviceClassSourceConfig](#config-kueue-x-k8s-io-v1beta2-DeviceClassSourceConfig)
+
+
+<p>DeviceClassCapacitySource configures capacity-based quota tracking
+for devices that allow multiple allocations (KEP-5075).</p>
+
+
+<table class="table">
+<thead><tr><th width="30%">Field</th><th>Description</th></tr></thead>
+<tbody>
+    
+  
+<tr><td><code>name</code> <B>[Required]</B><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#qualifiedname-v1-resource"><code>k8s.io/api/resource/v1.QualifiedName</code></a>
+</td>
+<td>
+   <p>Name identifies the capacity dimension to track for quota
+(e.g., &quot;gpu.example.com/memory&quot;).
+Must be a valid DRA QualifiedName.</p>
+</td>
+</tr>
+<tr><td><code>driver</code> <B>[Required]</B><br/>
+<code>string</code>
+</td>
+<td>
+   <p>Driver is the DRA driver name used to filter relevant ResourceSlices.
+Must match the spec.driver field on ResourceSlice objects.
+Must not exceed 63 characters.</p>
+</td>
+</tr>
+<tr><td><code>deviceSelector</code> <B>[Required]</B><br/>
+<a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#deviceselector-v1-resource"><code>k8s.io/api/resource/v1.DeviceSelector</code></a>
+</td>
+<td>
+   <p>DeviceSelector scopes which devices are eligible for quota accounting.
+Matches devices whose capacity dimensions should be tracked against
+the quota pool.
+The selector is compiled at config load time using the upstream dracel
+compiler.</p>
+</td>
+</tr>
+</tbody>
+</table>
+
 ## `DeviceClassCounterSource`     {#config-kueue-x-k8s-io-v1beta2-DeviceClassCounterSource}
     
 
@@ -633,8 +716,8 @@ must be named tls.key and tls.crt, respectively.</p>
 </td>
 <td>
    <p>Name is the counter name within the device's consumesCounters
-entries to track for quota. Must match a counter name published by
-the driver in ResourceSlice devices' consumesCounters field.
+entries to track for quota. Must be a DNS label and match a counter
+name published by the driver in ResourceSlice devices' consumesCounters field.
 Counter set names are per-device identifiers (e.g., gpu-0-counter-set,
 gpu-1-counter-set), so name matches across all counter sets
 for a given driver without requiring one mapping per device.
@@ -646,8 +729,8 @@ The total length must not exceed 63 characters.</p>
 </td>
 <td>
    <p>Driver is the DRA driver name used to filter relevant ResourceSlices.
-Must match the spec.driver field on ResourceSlice objects.
-The total length must not exceed 253 characters.</p>
+Must be a lowercase DNS subdomain and match the spec.driver field on ResourceSlice objects.
+The total length must not exceed 63 characters.</p>
 </td>
 </tr>
 <tr><td><code>deviceSelector</code> <B>[Required]</B><br/>
@@ -693,7 +776,13 @@ followed by a slash and a DNS label, or just a DNS label.
 DNS labels consist of lower-case alphanumeric characters or hyphens,
 and must start and end with an alphanumeric character.
 DNS subdomain prefixes follow the same rules as DNS labels but can contain periods.
-The total length must not exceed 253 characters.</p>
+The total length must not exceed 253 characters.
+With KueueDRAIntegration enabled it must not be <code>pods</code>; that exact name is
+reserved for Kueue's internal Pod-count accounting. A qualified name such
+as <code>example.com/pods</code> is allowed.
+Disabling the ReservedResourceNameValidation feature gate lets such a
+configuration load for an upgrade; flavor assignment still overwrites the
+key with the PodSet count.</p>
 </td>
 </tr>
 <tr><td><code>deviceClassNames</code> <B>[Required]</B><br/>
@@ -715,10 +804,10 @@ The total length of each name must not exceed 253 characters.</p>
 <td>
    <p>Sources configures resource accounting sources for this mapping.
 Each source defines how quota is tracked for this DeviceClass.
-Currently only counter sources are supported (for partitionable devices).
 Extended resource requests that resolve to a DeviceClass with sources
 configured are marked inadmissible.
-Requires the KueueDRAIntegrationPartitionableDevices feature gate.</p>
+Counter sources require KueueDRAIntegrationPartitionableDevices (enabled by default since v0.19).
+Capacity sources require KueueDRAIntegrationConsumableCapacity.</p>
 </td>
 </tr>
 </tbody>
@@ -733,7 +822,7 @@ Requires the KueueDRAIntegrationPartitionableDevices feature gate.</p>
 
 
 <p>DeviceClassSourceConfig defines a resource accounting source for a DeviceClassMapping.
-Exactly one of the source types must be set.</p>
+Exactly one of the source types must be set per entry.</p>
 
 
 <table class="table">
@@ -747,6 +836,16 @@ Exactly one of the source types must be set.</p>
 <td>
    <p>Counter configures counter-based quota for partitionable devices.
 Maps a DRA driver counter to the parent DeviceClassMapping's Kueue quota resource.</p>
+</td>
+</tr>
+<tr><td><code>capacity</code><br/>
+<a href="#config-kueue-x-k8s-io-v1beta2-DeviceClassCapacitySource"><code>DeviceClassCapacitySource</code></a>
+</td>
+<td>
+   <p>Capacity configures capacity-based quota for devices that allow
+multiple allocations (consumable capacity, KEP-5075).
+Maps a device capacity dimension to the parent DeviceClassMapping's Kueue quota resource.
+Requires the KueueDRAIntegrationConsumableCapacity feature gate.</p>
 </td>
 </tr>
 </tbody>
@@ -773,20 +872,35 @@ Maps a DRA driver counter to the parent DeviceClassMapping's Kueue quota resourc
    <p>preemptionStrategies indicates which constraints should a preemption satisfy.
 The preemption algorithm will only use the next strategy in the list if the
 incoming workload (preemptor) doesn't fit after using the previous strategies.
+AlmostLCA(x, y) is the last but one node on the path from x to the
+lowest common ancestor of x and y in the cohort hierarchy (see KEP-1714).
+The strategies compare the shares of AlmostLCA(preemptor, preemptee) and
+AlmostLCA(preemptee, preemptor). These are the shares of ClusterQueues themselves
+only when both ClusterQueues share the same parent Cohort.
 Possible values are:</p>
 <ul>
-<li>LessThanOrEqualToFinalShare: Only preempt a workload if the share of the preemptor CQ
-with the preemptor workload is less than or equal to the share of the preemptee CQ
+<li>LessThanOrEqualToFinalShare: Only preempt a workload if the share of
+AlmostLCA(preemptor, preemptee) with the preemptor workload admitted is
+less than or equal to the share of AlmostLCA(preemptee, preemptor)
 without the workload to be preempted.
 This strategy might favor preemption of smaller workloads in the preemptee CQ,
-regardless of priority or start time, in an effort to keep the share of the CQ
+regardless of priority or start time, in an effort to keep the share of AlmostLCA(preemptee, preemptor)
 as high as possible.</li>
-<li>LessThanInitialShare: Only preempt a workload if the share of the preemptor CQ
-with the incoming workload is strictly less than the share of the preemptee CQ.
+<li>LessThanInitialShare: Only preempt a workload if the share of
+AlmostLCA(preemptor, preemptee) with the preemptor workload admitted is
+strictly less than the share of AlmostLCA(preemptee, preemptor) with the
+workload to be preempted.
 This strategy doesn't depend on the share usage of the workload being preempted.
 As a result, the strategy chooses to preempt workloads with the lowest priority and
 newest start time first.</li>
 </ul>
+<p>Only the following lists are supported:</p>
+<ul>
+<li>[&quot;LessThanOrEqualToFinalShare&quot;]</li>
+<li>[&quot;LessThanInitialShare&quot;]</li>
+<li>[&quot;LessThanOrEqualToFinalShare&quot;, &quot;LessThanInitialShare&quot;]</li>
+</ul>
+<p>Any other combination or ordering fails configuration validation.</p>
 </td>
 </tr>
 </tbody>
@@ -1135,6 +1249,25 @@ during admission.</p>
 
 
 
+## `QuotaReleaseStrategy`     {#config-kueue-x-k8s-io-v1beta2-QuotaReleaseStrategy}
+    
+(Alias of `string`)
+
+**Appears in:**
+
+- [Configuration](#config-kueue-x-k8s-io-v1beta2-Configuration)
+
+
+<p>QuotaReleaseStrategy defines when Kueue releases quota for a terminating workload.</p>
+<p>Valid values are:</p>
+<ul>
+<li>&quot;OnTerminating&quot; (default): releases quota as soon as all pods have a deletionTimestamp set.</li>
+<li>&quot;OnTerminal&quot;: holds quota until all underlying pods have fully reached a terminal phase (Succeeded or Failed).</li>
+</ul>
+
+
+
+
 ## `RequeuingStrategy`     {#config-kueue-x-k8s-io-v1beta2-RequeuingStrategy}
     
 
@@ -1230,7 +1363,12 @@ re-queuing an evicted workload.</p>
 <a href="https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#resourcename-v1-core"><code>k8s.io/api/core/v1.ResourceName</code></a>
 </td>
 <td>
-   <p>Input is the name of the input resource.</p>
+   <p>Input is the name of the input resource.
+It must not be <code>pods</code>; that exact name is reserved for Kueue's internal
+Pod-count accounting. A qualified name such as <code>example.com/pods</code> is allowed.
+Disabling the ReservedResourceNameValidation feature gate lets such a
+configuration load for an upgrade; flavor assignment still overwrites the
+key with the PodSet count.</p>
 </td>
 </tr>
 <tr><td><code>strategy</code> <B>[Required]</B><br/>
@@ -1248,7 +1386,14 @@ Defaults to Retain</p>
    <p>MultiplyBy indicates the resource name requested by a workload, if
 specified.
 The requested amount of the resource is used to multiply the requested
-amount of the resource indicated by the &quot;input&quot; field.</p>
+amount of the resource indicated by the &quot;input&quot; field when computing
+&quot;outputs&quot;. It does not change the quantity retained under &quot;input&quot; when
+&quot;strategy&quot; is Retain.
+It must not be <code>pods</code>; that exact name is reserved for Kueue's internal
+Pod-count accounting. A qualified name such as <code>example.com/pods</code> is allowed.
+Disabling the ReservedResourceNameValidation feature gate lets such a
+configuration load for an upgrade; flavor assignment still overwrites the
+key with the PodSet count.</p>
 </td>
 </tr>
 <tr><td><code>outputs</code> <B>[Required]</B><br/>
@@ -1256,6 +1401,12 @@ amount of the resource indicated by the &quot;input&quot; field.</p>
 </td>
 <td>
    <p>Outputs specifies the output resources and quantities per unit of input resource.
+An output resource name must not be <code>pods</code>; that exact name is reserved for
+Kueue's internal Pod-count accounting. A qualified name such as
+<code>example.com/pods</code> is allowed.
+Disabling the ReservedResourceNameValidation feature gate lets such a
+configuration load for an upgrade; flavor assignment still overwrites the
+key with the PodSet count.
 An empty Outputs combined with a <code>Replace</code> Strategy causes the Input resource to be ignored by Kueue.</p>
 </td>
 </tr>
@@ -1320,6 +1471,18 @@ for Dynamic Resource Allocation support.</p>
 </tr>
 </tbody>
 </table>
+
+## `SourceKind`     {#config-kueue-x-k8s-io-v1beta2-SourceKind}
+    
+(Alias of `string`)
+
+**Appears in:**
+
+- [ControllerMetricsCustomLabel](#config-kueue-x-k8s-io-v1beta2-ControllerMetricsCustomLabel)
+
+
+
+
 
 ## `TLSOptions`     {#config-kueue-x-k8s-io-v1beta2-TLSOptions}
     
@@ -1433,8 +1596,9 @@ evicted and requeued in the same cluster queue.</p>
 <code>bool</code>
 </td>
 <td>
-   <p>BlockAdmission when true, the cluster queue will block admissions for all
-subsequent jobs until the jobs reach the PodsReady=true condition.
+   <p>BlockAdmission when true, Kueue blocks admission of all workloads across
+all ClusterQueues until every previously-admitted workload reaches the
+PodsReady=true condition.
 Defaults to false.</p>
 </td>
 </tr>

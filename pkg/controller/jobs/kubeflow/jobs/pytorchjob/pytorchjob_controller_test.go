@@ -24,10 +24,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/component-base/featuregate"
-	"k8s.io/utils/ptr"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/features"
+	"sigs.k8s.io/kueue/pkg/podset"
 	utiltesting "sigs.k8s.io/kueue/pkg/util/testing"
 	utiltestingapi "sigs.k8s.io/kueue/pkg/util/testing/v1beta2"
 	testingpytorchjob "sigs.k8s.io/kueue/pkg/util/testingjobs/pytorchjob"
@@ -225,6 +225,53 @@ func TestOrderedReplicaTypes(t *testing.T) {
 	}
 }
 
+func TestRestorePodSetsInfo(t *testing.T) {
+	baseJob := testingpytorchjob.MakePyTorchJob("pytorchjob", "ns").
+		PyTorchReplicaSpecs(
+			testingpytorchjob.PyTorchReplicaSpecRequirement{
+				ReplicaType:  kftraining.PyTorchJobReplicaTypeMaster,
+				ReplicaCount: 1,
+			},
+			testingpytorchjob.PyTorchReplicaSpecRequirement{
+				ReplicaType:  kftraining.PyTorchJobReplicaTypeWorker,
+				ReplicaCount: 1,
+			},
+		)
+
+	testCases := map[string]struct {
+		job         *kftraining.PyTorchJob
+		podSetsInfo []podset.PodSetInfo
+		wantChanged bool
+	}{
+		"more podSetsInfo than replica types is a no-op": {
+			job:         baseJob.Clone().Obj(),
+			podSetsInfo: []podset.PodSetInfo{{}, {}, {}},
+			wantChanged: false,
+		},
+		"fewer podSetsInfo than replica types is a no-op": {
+			job:         baseJob.Clone().Obj(),
+			podSetsInfo: []podset.PodSetInfo{{}},
+			wantChanged: false,
+		},
+		"matching length restores pod sets": {
+			job: baseJob.Clone().Obj(),
+			podSetsInfo: []podset.PodSetInfo{
+				{NodeSelector: map[string]string{"restored": "true"}},
+				{NodeSelector: map[string]string{"restored": "true"}},
+			},
+			wantChanged: true,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			if gotChanged := fromObject(tc.job).RestorePodSetsInfo(t.Context(), tc.podSetsInfo); gotChanged != tc.wantChanged {
+				t.Errorf("RestorePodSetsInfo() = %v, want %v", gotChanged, tc.wantChanged)
+			}
+		})
+	}
+}
+
 func TestPodSets(t *testing.T) {
 	testCases := map[string]struct {
 		job          *kftraining.PyTorchJob
@@ -281,13 +328,13 @@ func TestPodSets(t *testing.T) {
 						PodSpec(job.Spec.PyTorchReplicaSpecs[kftraining.PyTorchJobReplicaTypeMaster].Template.Spec).
 						Annotations(map[string]string{kueue.PodSetRequiredTopologyAnnotation: "cloud.com/rack"}).
 						RequiredTopologyRequest("cloud.com/rack").
-						PodIndexLabel(ptr.To(kftraining.ReplicaIndexLabel)).
+						PodIndexLabel(new(kftraining.ReplicaIndexLabel)).
 						Obj(),
 					*utiltestingapi.MakePodSet(kueue.NewPodSetReference(string(kftraining.PyTorchJobReplicaTypeWorker)), 1).
 						PodSpec(job.Spec.PyTorchReplicaSpecs[kftraining.PyTorchJobReplicaTypeWorker].Template.Spec).
 						Annotations(map[string]string{kueue.PodSetPreferredTopologyAnnotation: "cloud.com/block"}).
 						PreferredTopologyRequest("cloud.com/block").
-						PodIndexLabel(ptr.To(kftraining.ReplicaIndexLabel)).
+						PodIndexLabel(new(kftraining.ReplicaIndexLabel)).
 						Obj(),
 				}
 			},

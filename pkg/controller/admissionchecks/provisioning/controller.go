@@ -27,6 +27,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -51,6 +52,7 @@ import (
 	"sigs.k8s.io/kueue/pkg/podset"
 	"sigs.k8s.io/kueue/pkg/util/admissioncheck"
 	"sigs.k8s.io/kueue/pkg/util/api"
+	equalityutil "sigs.k8s.io/kueue/pkg/util/equality"
 	"sigs.k8s.io/kueue/pkg/util/roletracker"
 	"sigs.k8s.io/kueue/pkg/util/slices"
 	"sigs.k8s.io/kueue/pkg/workload"
@@ -169,7 +171,10 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		checkConfig[checkName] = prc
 	}
 
-	activeOrLastPRForChecks := c.activeOrLastPRForChecks(ctx, wl, checkConfig, provReqs.Items)
+	activeOrLastPRForChecks, err := c.activeOrLastPRForChecks(ctx, wl, checkConfig, provReqs.Items)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
 
 	wlInfo := workloadInfo{
 		checkStates: make([]kueue.AdmissionCheckState, 0),
@@ -200,18 +205,22 @@ func (c *Controller) activeOrLastPRForChecks(
 	wl *kueue.Workload,
 	checkConfig map[kueue.AdmissionCheckReference]*kueue.ProvisioningRequestConfig,
 	ownedPRs []autoscaling.ProvisioningRequest,
-) map[kueue.AdmissionCheckReference]*autoscaling.ProvisioningRequest {
+) (map[kueue.AdmissionCheckReference]*autoscaling.ProvisioningRequest, error) {
 	activeOrLastPRForChecks := make(map[kueue.AdmissionCheckReference]*autoscaling.ProvisioningRequest)
 	log := ctrl.LoggerFrom(ctx)
 	for checkName, prc := range checkConfig {
 		if prc == nil {
 			continue
 		}
+		reqNeeded, err := reqIsNeeded(wl, prc)
+		if err != nil {
+			return nil, err
+		}
 		for i := range ownedPRs {
 			req := &ownedPRs[i]
 			// PRs relevant for the admission check
 			if matchesWorkloadAndCheck(req, wl.Name, checkName) {
-				if c.reqIsNeeded(wl, prc) && provReqSyncedWithConfig(req, prc) {
+				if reqNeeded && provReqSyncedWithConfig(req, prc) {
 					currPr, exists := activeOrLastPRForChecks[checkName]
 					if !exists || getAttempt(log, currPr, wl.Name, checkName) < getAttempt(log, req, wl.Name, checkName) {
 						activeOrLastPRForChecks[checkName] = req
@@ -220,7 +229,7 @@ func (c *Controller) activeOrLastPRForChecks(
 			}
 		}
 	}
-	return activeOrLastPRForChecks
+	return activeOrLastPRForChecks, nil
 }
 
 func (c *Controller) deleteUnusedProvisioningRequests(
@@ -258,12 +267,17 @@ func (c *Controller) syncOwnedProvisionRequest(
 			// the check is not active
 			continue
 		}
-		if !c.reqIsNeeded(wl, prc) {
+		reqNeeded, err := reqIsNeeded(wl, prc)
+		if err != nil {
+			return err
+		}
+		if !reqNeeded {
 			continue
 		}
 		ac := admissioncheck.FindAdmissionCheck(wlInfo.checkStates, checkName)
-		if ac != nil && ac.State == kueue.CheckStateReady {
-			log.V(2).Info("Skip syncing of the ProvReq for admission check which is Ready", "workload", klog.KObj(wl), "admissionCheck", checkName)
+		if ac != nil && ac.State != kueue.CheckStatePending {
+			// Skip non-Pending checks (Ready done; Retry/Rejected wait for eviction).
+			log.V(2).Info("Skip syncing of the ProvReq for admission check which is not Pending", "workload", klog.KObj(wl), "admissionCheck", checkName, "state", ac.State)
 			continue
 		}
 
@@ -305,7 +319,7 @@ func (c *Controller) syncOwnedProvisionRequest(
 			}
 			passProvReqParams(wl, req)
 
-			mergedPodSets, err := mergePodSets(wl, &prc.Spec)
+			mergedPodSets, err := mergePodSets(ctx, wl, &prc.Spec)
 			if err != nil {
 				return err
 			}
@@ -313,17 +327,49 @@ func (c *Controller) syncOwnedProvisionRequest(
 			for _, mergedPodSet := range mergedPodSets {
 				ptName := getProvisioningRequestPodTemplateName(requestName, mergedPodSet.Name)
 
-				pt := &corev1.PodTemplate{}
-				err := c.client.Get(ctx, types.NamespacedName{Namespace: wl.Namespace, Name: ptName}, pt)
-				if client.IgnoreNotFound(err) != nil {
-					return err
-				}
+				desired, err := c.buildPodTemplate(ctx, wl, ptName, mergedPodSet.PodSet, mergedPodSet.PodSetAssignment)
 				if err != nil {
+					msg := fmt.Sprintf("Error building PodTemplate %q: %v", ptName, err)
+					return c.handleError(ctx, wl, ac, nil, msg, err)
+				}
+
+				existing := &corev1.PodTemplate{}
+				err = c.client.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+				if client.IgnoreNotFound(err) != nil {
+					msg := fmt.Sprintf("Error getting PodTemplate %q: %v", ptName, err)
+					return c.handleError(ctx, wl, ac, nil, msg, err)
+				}
+				switch {
+				case err != nil:
 					// it's a not found, so create it
-					_, err := c.createPodTemplate(ctx, wl, ptName, mergedPodSet.PodSet, mergedPodSet.PodSetAssignment)
-					if err != nil {
+					if err := c.client.Create(ctx, desired); err != nil {
 						msg := fmt.Sprintf("Error creating PodTemplate %q: %v", ptName, err)
-						return c.handleError(ctx, wl, ac, msg, err)
+						return c.handleError(ctx, wl, ac, desired, msg, err)
+					}
+					log.V(3).Info("Created PodTemplate", "podTemplate", klog.KObj(desired))
+				case equalityutil.ComparePodTemplate(&existing.Template.Spec, &desired.Template.Spec):
+					// Already matches the Kueue-derived spec; skip the write.
+					log.V(3).Info("PodTemplate already up to date, skipping update", "podTemplate", klog.KObj(desired))
+				default:
+					// Divergent PodTemplate at the deterministic name. Replace it with
+					// Kueue-derived contents so the ProvisioningRequest never adopts
+					// foreign/stale specs. Do not Retry the admission check: leftover
+					// templates from a prior admission (e.g. after preemption onto another
+					// flavor) share this name, and Retry would block re-admission. A
+					// recreate that races the still-finalizing Delete returns the error;
+					// controller-runtime reconciles again with backoff.
+					if features.Enabled(features.EnforceProvisioningPodTemplateContents) {
+						if err := c.client.Delete(ctx, existing); client.IgnoreNotFound(err) != nil {
+							msg := fmt.Sprintf("Error deleting divergent PodTemplate %q: %v", ptName, err)
+							return c.handleError(ctx, wl, ac, existing, msg, err)
+						}
+						if err := c.client.Create(ctx, desired); err != nil {
+							msg := fmt.Sprintf("Error recreating PodTemplate %q: %v", ptName, err)
+							return c.handleError(ctx, wl, ac, desired, msg, err)
+						}
+						log.V(3).Info("Replaced divergent PodTemplate", "podTemplate", klog.KObj(desired))
+					} else {
+						log.V(3).Info("PodTemplate differs but EnforceProvisioningPodTemplateContents is disabled; reusing existing", "podTemplate", klog.KObj(existing))
 					}
 				}
 
@@ -341,7 +387,7 @@ func (c *Controller) syncOwnedProvisionRequest(
 
 			if err := c.client.Create(ctx, req); err != nil {
 				msg := fmt.Sprintf("Error creating ProvisioningRequest %q: %v", requestName, err)
-				return c.handleError(ctx, wl, ac, msg, err)
+				return c.handleError(ctx, wl, ac, req, msg, err)
 			}
 			c.record.Eventf(wl, nil, corev1.EventTypeNormal, "ProvisioningRequestCreated", "Created", "Created ProvisioningRequest: %q", req.Name)
 			activeOrLastPRForChecks[checkName] = req
@@ -353,7 +399,16 @@ func (c *Controller) syncOwnedProvisionRequest(
 	return nil
 }
 
-func (c *Controller) handleError(ctx context.Context, wl *kueue.Workload, ac *kueue.AdmissionCheckState, msg string, err error) error {
+func (c *Controller) handleError(ctx context.Context, wl *kueue.Workload, ac *kueue.AdmissionCheckState, obj client.Object, msg string, err error) error {
+	if apierrors.IsAlreadyExists(err) && c.isMissingInCache(ctx, obj) {
+		// The object exists on the API server but not yet in the cache, so an earlier reconcile
+		// created it and this one raced it. The message set below would outlive the state it
+		// describes: it stays on the admission check until another update replaces it, and every
+		// event built from that check appends it, up to the one reporting why a Workload was
+		// deactivated. Report nothing and leave the error to the caller.
+		ctrl.LoggerFrom(ctx).V(2).Info("Object already exists but is not in the cache yet, not recording the error", "reason", msg)
+		return err
+	}
 	c.record.Eventf(wl, nil, corev1.EventTypeWarning, "FailedCreate", "FailedCreate", api.TruncateEventMessage(msg))
 	patchErr := workloadpatching.PatchStatus(ctx, c.client, wl, kueue.ProvisioningRequestControllerName, func(wl *kueue.Workload) (bool, error) {
 		ac.Message = api.TruncateConditionMessage(msg)
@@ -363,7 +418,16 @@ func (c *Controller) handleError(ctx context.Context, wl *kueue.Workload, ac *ku
 	return errors.Join(err, patchErr)
 }
 
-func (c *Controller) createPodTemplate(ctx context.Context, wl *kueue.Workload, name string, ps *kueue.PodSet, psa *kueue.PodSetAssignment) (*corev1.PodTemplate, error) {
+// isMissingInCache reports whether the object is absent from the cache. Paired with an
+// AlreadyExists from the API server it means the cache has not observed an object an earlier
+// reconcile created. Anything the cache can already see is left to the caller to report, since
+// there is no evidence that retrying resolves it. The object doubles as the target of the Get.
+func (c *Controller) isMissingInCache(ctx context.Context, obj client.Object) bool {
+	return apierrors.IsNotFound(c.client.Get(ctx, client.ObjectKeyFromObject(obj), obj))
+}
+
+// buildPodTemplate derives a PodTemplate from the Workload PodSet and admission assignment.
+func (c *Controller) buildPodTemplate(ctx context.Context, wl *kueue.Workload, name string, ps *kueue.PodSet, psa *kueue.PodSetAssignment) (*corev1.PodTemplate, error) {
 	newPt := &corev1.PodTemplate{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -372,7 +436,8 @@ func (c *Controller) createPodTemplate(ctx context.Context, wl *kueue.Workload, 
 				constants.ManagedByKueueLabelKey: constants.ManagedByKueueLabelValue,
 			},
 		},
-		Template: ps.Template,
+		// Deep-copy: podset.Merge mutates in place and ps.Template aliases wl.Spec.PodSets.
+		Template: *ps.Template.DeepCopy(),
 	}
 
 	// set the controller reference to workload so that the template is not left orphaned
@@ -388,7 +453,7 @@ func (c *Controller) createPodTemplate(ctx context.Context, wl *kueue.Workload, 
 		return nil, err
 	}
 
-	err = podset.Merge(&newPt.Template.ObjectMeta, &newPt.Template.Spec, psi)
+	err = podset.Merge(ctrl.LoggerFrom(ctx), &newPt.Template.ObjectMeta, &newPt.Template.Spec, psi)
 	if err != nil {
 		return nil, err
 	}
@@ -396,11 +461,17 @@ func (c *Controller) createPodTemplate(ctx context.Context, wl *kueue.Workload, 
 	// copy limits to requests if needed
 	workload.UseLimitsAsMissingRequestsInPod(&newPt.Template.Spec)
 
-	if err := c.client.Create(ctx, newPt); err != nil {
-		return nil, err
-	}
-
 	return newPt, nil
+}
+
+// setAdmissionCheckRetry sets the admission check to Retry using the
+// ProvisioningRequestConfig retry strategy (backoff + requeue state).
+func setAdmissionCheckRetry(ac *kueue.AdmissionCheckState, prc *kueue.ProvisioningRequestConfig, clk clock.Clock) {
+	ac.State = kueue.CheckStateRetry
+	workload.UpdateAdmissionCheckRequeueState(ac,
+		*prc.Spec.RetryStrategy.BackoffBaseSeconds,
+		*prc.Spec.RetryStrategy.BackoffMaxSeconds,
+		clk)
 }
 
 func (c *Controller) syncProvisionRequestsPodTemplates(ctx context.Context, wl *kueue.Workload, request *autoscaling.ProvisioningRequest) error {
@@ -446,8 +517,25 @@ func (c *Controller) syncProvisionRequestsPodTemplates(ctx context.Context, wl *
 	return nil
 }
 
-func (c *Controller) reqIsNeeded(wl *kueue.Workload, prc *kueue.ProvisioningRequestConfig) bool {
-	return len(requiredPodSets(wl.Spec.PodSets, prc.Spec.ManagedResources)) > 0
+func reqIsNeeded(wl *kueue.Workload, prc *kueue.ProvisioningRequestConfig) (bool, error) {
+	assignments := slices.ToRefMap(wl.Status.Admission.PodSetAssignments, func(psa *kueue.PodSetAssignment) kueue.PodSetReference {
+		return psa.Name
+	})
+	managedResources := sets.New(prc.Spec.ManagedResources...)
+	for i := range wl.Spec.PodSets {
+		ps := &wl.Spec.PodSets[i]
+		if ps.Count <= 0 || (managedResources.Len() > 0 && !podUses(&ps.Template.Spec, managedResources)) {
+			continue
+		}
+		psa, found := assignments[ps.Name]
+		if !found {
+			return false, fmt.Errorf("%w: missing assignment for PodSet %q", errInconsistentPodSetAssignments, ps.Name)
+		}
+		if ptr.Deref(psa.Count, ps.Count) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func requiredPodSets(podSets []kueue.PodSet, resources []corev1.ResourceName) []kueue.PodSetReference {
@@ -455,7 +543,7 @@ func requiredPodSets(podSets []kueue.PodSet, resources []corev1.ResourceName) []
 	users := make([]kueue.PodSetReference, 0, len(podSets))
 	for i := range podSets {
 		ps := &podSets[i]
-		if len(resources) == 0 || podUses(&ps.Template.Spec, resourcesSet) {
+		if ps.Count > 0 && (len(resources) == 0 || podUses(&ps.Template.Spec, resourcesSet)) {
 			users = append(users, ps.Name)
 		}
 	}
@@ -490,8 +578,12 @@ func containerUses(cont *corev1.Container, resourceSet sets.Set[corev1.ResourceN
 	return false
 }
 
+// updateCheckMessage sets the message of the check, reporting whether it changed. An empty message
+// is applied as well. Otherwise a message describing a previous state of the ProvisioningRequest
+// would not only be misleading in the Workload status, it would also be appended to the events
+// built from the check.
 func updateCheckMessage(checkState *kueue.AdmissionCheckState, message string) bool {
-	if message == "" || checkState.Message == message {
+	if checkState.Message == message {
 		return false
 	}
 	checkState.Message = message
@@ -536,12 +628,13 @@ func (c *Controller) syncCheckStates(
 
 		for check, prc := range checkConfig {
 			checkState := *checksMap[check]
-			//nolint:gocritic // ignore ifElseChain
 			if prc == nil {
 				// the check is not active
 				updated = updateCheckState(&checkState, kueue.CheckStatePending) || updated
 				updated = updateCheckMessage(&checkState, CheckInactiveMessage) || updated
-			} else if !c.reqIsNeeded(wl, prc) {
+			} else if reqNeeded, err := reqIsNeeded(wl, prc); err != nil {
+				return false, err
+			} else if !reqNeeded {
 				if updateCheckState(&checkState, kueue.CheckStateReady) {
 					updated = true
 					checkState.Message = NoRequestNeeded
@@ -560,8 +653,6 @@ func (c *Controller) syncCheckStates(
 					"accepted", isAccepted(pr),
 					"bookingExpired", isBookingExpired(pr),
 					"capacityRevoked", isCapacityRevoked(pr))
-				backoffBaseSeconds := *prc.Spec.RetryStrategy.BackoffBaseSeconds
-				backoffMaxSeconds := *prc.Spec.RetryStrategy.BackoffMaxSeconds
 				backoffLimitCount := *prc.Spec.RetryStrategy.BackoffLimitCount
 				switch {
 				case isFailed(pr):
@@ -572,8 +663,7 @@ func (c *Controller) syncCheckStates(
 						if getAttempt(log, pr, wl.Name, check) > ptr.Deref(checkState.RetryCount, 0) {
 							// We don't want to Retry on old ProvisioningRequests
 							updated = true
-							updateCheckState(&checkState, kueue.CheckStateRetry)
-							workload.UpdateAdmissionCheckRequeueState(&checkState, backoffBaseSeconds, backoffMaxSeconds, c.clock)
+							setAdmissionCheckRetry(&checkState, prc, c.clock)
 						}
 					} else {
 						updated = true
@@ -596,8 +686,7 @@ func (c *Controller) syncCheckStates(
 							updated = updateCheckMessage(&checkState, message) || updated
 							if getAttempt(log, pr, wl.Name, check) > ptr.Deref(checkState.RetryCount, 0) {
 								updated = true
-								updateCheckState(&checkState, kueue.CheckStateRetry)
-								workload.UpdateAdmissionCheckRequeueState(&checkState, backoffBaseSeconds, backoffMaxSeconds, c.clock)
+								setAdmissionCheckRetry(&checkState, prc, c.clock)
 							}
 						} else {
 							updated = true
@@ -621,6 +710,9 @@ func (c *Controller) syncCheckStates(
 						updated = updateCheckState(&checkState, kueue.CheckStatePending) || updated
 					}
 				default:
+					// Nothing to report until the autoscaler sets a condition, and whatever the
+					// previous state left behind, notably a handleError message, no longer holds.
+					updated = updateCheckMessage(&checkState, "") || updated
 					updated = updateCheckState(&checkState, kueue.CheckStatePending) || updated
 				}
 			}
@@ -642,7 +734,7 @@ func (c *Controller) syncCheckStates(
 	}
 	if updated {
 		for i := range recorderMessages {
-			c.record.Eventf(wl, nil, corev1.EventTypeNormal, "AdmissionCheckUpdated", "AdmissionCheckUpdated", api.TruncateEventMessage(recorderMessages[i]))
+			c.record.Eventf(wl, nil, corev1.EventTypeNormal, "UpdatedAdmissionCheck", "UpdatedAdmissionCheck", api.TruncateEventMessage(recorderMessages[i]))
 		}
 	}
 	wlInfo.update(wl, c.clock)
@@ -880,9 +972,11 @@ type MergedPodSet struct {
 }
 
 func mergePodSets(
+	ctx context.Context,
 	wl *kueue.Workload,
 	prcSpec *kueue.ProvisioningRequestConfigSpec,
 ) ([]MergedPodSet, error) {
+	log := ctrl.LoggerFrom(ctx)
 	expectedPodSets := requiredPodSets(wl.Spec.PodSets, prcSpec.ManagedResources)
 	psaMap := slices.ToRefMap(wl.Status.Admission.PodSetAssignments, func(p *kueue.PodSetAssignment) kueue.PodSetReference { return p.Name })
 	podSetMap := slices.ToRefMap(wl.Spec.PodSets, func(ps *kueue.PodSet) kueue.PodSetReference { return ps.Name })
@@ -896,11 +990,17 @@ func mergePodSets(
 			return nil, errInconsistentPodSetAssignments
 		}
 
+		count := ptr.Deref(psa.Count, ps.Count)
+		if count <= 0 {
+			log.V(4).Info("Skipping non-positive PodSet", "workload", klog.KObj(wl), "podSet", psName, "count", count)
+			continue
+		}
+
 		merged := false
 		if mergePolicy != nil {
 			for i, mps := range mergedPodSets {
 				if merged = canMergePodSets(mps.PodSet, ps, mergePolicy); merged {
-					mergedPodSets[i].Count += ptr.Deref(psa.Count, ps.Count)
+					mergedPodSets[i].Count += count
 					break
 				}
 			}
@@ -911,7 +1011,7 @@ func mergePodSets(
 				Name:             psName,
 				PodSet:           ps,
 				PodSetAssignment: psa,
-				Count:            ptr.Deref(psa.Count, ps.Count),
+				Count:            count,
 			})
 		}
 	}

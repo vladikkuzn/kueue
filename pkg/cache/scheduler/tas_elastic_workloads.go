@@ -17,6 +17,8 @@ limitations under the License.
 package scheduler
 
 import (
+	"context"
+
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/resources"
 	utiltas "sigs.k8s.io/kueue/pkg/util/tas"
@@ -33,6 +35,7 @@ type elasticPlacementResult struct {
 // It keeps previous pods fixed and places only new pods during scale-up,
 // or truncates the assignment during scale-down.
 func (s *TASFlavorSnapshot) handleElasticWorkload(
+	ctx context.Context,
 	workers TASPodSetRequests,
 	leader *TASPodSetRequests,
 	assumedUsage map[utiltas.TopologyDomainID]resources.Requests,
@@ -50,11 +53,21 @@ func (s *TASFlavorSnapshot) handleElasticWorkload(
 		return elasticPlacementResult{applied: false}
 	}
 
+	// The leader's previous assignment is reused on every elastic path, so if
+	// its domain is gone the whole group needs fresh placement.
+	if leader != nil && leader.PreviousAssignment != nil {
+		if isStale, staleDomain := s.IsTopologyAssignmentStale(utiltas.InternalFrom(leader.PreviousAssignment)); isStale {
+			s.log.V(3).Info("previous TAS assignment of the leader is stale, doing fresh placement",
+				"staleDomain", staleDomain)
+			return elasticPlacementResult{applied: false}
+		}
+	}
+
 	previousCount := utiltas.CountPodsInAssignment(prevAssignment)
 
 	switch {
 	case workers.Count > previousCount:
-		return s.handleScaleUp(workers, leader, prevAssignment, previousCount, assumedUsage, opts)
+		return s.handleScaleUp(ctx, workers, leader, prevAssignment, previousCount, assumedUsage, opts)
 	case workers.Count < previousCount:
 		return s.handleScaleDown(workers, leader, prevAssignment, assumedUsage)
 	default:
@@ -65,6 +78,7 @@ func (s *TASFlavorSnapshot) handleElasticWorkload(
 
 // handleScaleUp places only delta pods while keeping previous pods fixed.
 func (s *TASFlavorSnapshot) handleScaleUp(
+	ctx context.Context,
 	workers TASPodSetRequests,
 	leader *TASPodSetRequests,
 	prevAssignment *utiltas.TopologyAssignment,
@@ -82,7 +96,18 @@ func (s *TASFlavorSnapshot) handleScaleUp(
 	// Previous pods consume capacity.
 	addAssumedUsage(assumedUsage, prevAssignment, &workers)
 
-	deltaAssignments, reason := s.findTopologyAssignment(deltaRequest, leader, assumedUsage, opts.simulateEmpty, "")
+	// The leader pod from the previous slice keeps running during scale-up, so
+	// its assignment must be preserved rather than recomputed; account for its
+	// usage so the delta placement does not oversubscribe its domain.
+	var leaderPrevAssignment *utiltas.TopologyAssignment
+	placementLeader := leader
+	if leader != nil && leader.PreviousAssignment != nil {
+		leaderPrevAssignment = utiltas.InternalFrom(leader.PreviousAssignment)
+		addAssumedUsage(assumedUsage, leaderPrevAssignment, leader)
+		placementLeader = nil
+	}
+
+	deltaAssignments, reason := s.findTopologyAssignment(ctx, deltaRequest, placementLeader, assumedUsage, opts.simulateEmpty, "", opts.workload)
 	if reason != "" {
 		result[workers.PodSet.Name] = tasPodSetAssignmentResult{FailureReason: reason}
 		return elasticPlacementResult{applied: true, assignments: result}
@@ -93,8 +118,12 @@ func (s *TASFlavorSnapshot) handleScaleUp(
 	result[workers.PodSet.Name] = tasPodSetAssignmentResult{TopologyAssignment: finalAssignment}
 
 	if leader != nil {
-		result[leader.PodSet.Name] = tasPodSetAssignmentResult{TopologyAssignment: deltaAssignments[leader.PodSet.Name]}
-		addAssumedUsage(assumedUsage, deltaAssignments[leader.PodSet.Name], leader)
+		if leaderPrevAssignment != nil {
+			result[leader.PodSet.Name] = tasPodSetAssignmentResult{TopologyAssignment: leaderPrevAssignment}
+		} else {
+			result[leader.PodSet.Name] = tasPodSetAssignmentResult{TopologyAssignment: deltaAssignments[leader.PodSet.Name]}
+			addAssumedUsage(assumedUsage, deltaAssignments[leader.PodSet.Name], leader)
+		}
 	}
 
 	// Add only delta to avoid double-counting previous pods.

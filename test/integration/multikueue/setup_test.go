@@ -35,7 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/utils/ptr"
 	inventoryv1alpha1 "sigs.k8s.io/cluster-inventory-api/apis/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,7 +43,7 @@ import (
 	config "sigs.k8s.io/kueue/apis/config/v1beta2"
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/controller/admissionchecks/multikueue"
-	"sigs.k8s.io/kueue/pkg/controller/jobframework"
+	jobcontrollers "sigs.k8s.io/kueue/pkg/controller/jobs"
 	workloadjob "sigs.k8s.io/kueue/pkg/controller/jobs/job"
 	"sigs.k8s.io/kueue/pkg/features"
 	utiltesting "sigs.k8s.io/kueue/pkg/util/testing"
@@ -186,8 +185,9 @@ var _ = ginkgo.Describe("MultiKueue", ginkgo.Label("area:multikueue", "feature:m
 
 		ginkgo.By("creating a config with duplicate clusters should fail", func() {
 			badConfig := utiltestingapi.MakeMultiKueueConfig("bad-config").Clusters("c1", "c2", "c1").Obj()
-			gomega.Expect(managerTestCluster.client.Create(managerTestCluster.ctx, badConfig).Error()).Should(gomega.Equal(
-				`MultiKueueConfig.kueue.x-k8s.io "bad-config" is invalid: spec.clusters[2]: Duplicate value: "c1"`))
+			err := managerTestCluster.client.Create(managerTestCluster.ctx, badConfig)
+			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("must be unique"))
 		})
 
 		config := utiltestingapi.MakeMultiKueueConfig("testing-config").Clusters("testing-cluster").Obj()
@@ -813,7 +813,7 @@ var _ = ginkgo.Describe("MultiKueue", ginkgo.Label("area:multikueue", "feature:m
 			gomega.Eventually(func(g gomega.Gomega) {
 				mkc := &kueue.MultiKueueConfig{}
 				g.Expect(managerTestCluster.client.Get(managerTestCluster.ctx, client.ObjectKeyFromObject(managerMultiKueueConfig), mkc)).To(gomega.Succeed())
-				mkc.Spec.QuotaManagement = ptr.To(kueue.QuotaManagementAutomated)
+				mkc.Spec.QuotaManagement = new(kueue.QuotaManagementAutomated)
 				g.Expect(managerTestCluster.client.Update(managerTestCluster.ctx, mkc)).To(gomega.Succeed())
 			}, util.Timeout, util.Interval).Should(gomega.Succeed())
 
@@ -1311,7 +1311,7 @@ var _ = ginkgo.Describe("Manager quota automation feature gate", ginkgo.Label("a
 				err := multikueue.SetupIndexer(ctx, mgr.GetFieldIndexer(), managersConfigNamespace.Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				adapters, err := jobframework.GetMultiKueueAdapters(defaultEnabledIntegrations)
+				adapters, err := jobcontrollers.NewIntegrationManager().GetMultiKueueAdapters(defaultEnabledIntegrations)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = multikueue.SetupControllers(mgr, managersConfigNamespace.Name,
@@ -1348,7 +1348,7 @@ var _ = ginkgo.Describe("Manager quota automation feature gate", ginkgo.Label("a
 				err := multikueue.SetupIndexer(ctx, mgr.GetFieldIndexer(), managersConfigNamespace.Name)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-				adapters, err := jobframework.GetMultiKueueAdapters(defaultEnabledIntegrations)
+				adapters, err := jobcontrollers.NewIntegrationManager().GetMultiKueueAdapters(defaultEnabledIntegrations)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				err = multikueue.SetupControllers(mgr, managersConfigNamespace.Name,

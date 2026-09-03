@@ -23,7 +23,9 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/go-logr/logr"
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
+	rayctrlcommon "github.com/ray-project/kuberay/ray-operator/controllers/ray/common"
 	rayutils "github.com/ray-project/kuberay/ray-operator/controllers/ray/utils"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
+	"sigs.k8s.io/kueue/pkg/constants"
 	"sigs.k8s.io/kueue/pkg/controller/jobframework"
 	"sigs.k8s.io/kueue/pkg/features"
 	"sigs.k8s.io/kueue/pkg/podset"
@@ -56,9 +59,41 @@ const (
 	RayClusterGenerationAnnotation = "kueue.x-k8s.io/raycluster-generation"
 )
 
+var (
+	// errRedisCleanupMissingRayContainer is returned when GCS fault tolerance is
+	// enabled but the head Pod template does not include the Ray container needed
+	// to account for the Redis cleanup Job's resource requests.
+	errRedisCleanupMissingRayContainer = errors.New("cannot account for Redis cleanup resources: head pod template must include the Ray container")
+	// errPodSetNameMismatch is returned when a RayCluster's worker group has no
+	// matching PodSet in the Ray object's spec.
+	errPodSetNameMismatch = errors.New("PodSet name mismatch")
+	// errUnmarshalPodSetReplicaSizes is returned when the
+	// RayClusterPodsetReplicaSizesAnnotation value cannot be parsed.
+	errUnmarshalPodSetReplicaSizes = fmt.Errorf("failed to unmarshal %s annotation", RayClusterPodsetReplicaSizesAnnotation)
+)
+
+// effectiveWorkerCount returns the effective worker pod count for a worker
+// group: Replicas scaled by NumOfHosts, with Replicas defaulting to 1 when
+// unset. BuildPodSets, UpdatePodSets, and the MultiKueue elastic replica sync
+// all call this so the per-group count derivation stays in one place.
+func effectiveWorkerCount(wgs *rayv1.WorkerGroupSpec) int32 {
+	count := int32(1)
+	if wgs.Replicas != nil {
+		count = *wgs.Replicas
+	}
+	if wgs.NumOfHosts > 1 {
+		count *= wgs.NumOfHosts
+	}
+	return count
+}
+
 // BuildPodSets builds PodSets from RayClusterSpec.
 func BuildPodSets(rayClusterSpec *rayv1.RayClusterSpec, annotations map[string]string) ([]kueue.PodSet, error) {
 	podSets := make([]kueue.PodSet, 0)
+	var collectorOptions *rayv1.CollectorOptions
+	if rayClusterSpec.HistoryServerOptions != nil {
+		collectorOptions = rayClusterSpec.HistoryServerOptions.CollectorOptions
+	}
 
 	// head
 	headPodSet := kueue.PodSet{
@@ -88,22 +123,21 @@ func BuildPodSets(rayClusterSpec *rayv1.RayClusterSpec, annotations map[string]s
 			autoscalerContainer(rayClusterSpec.AutoscalerOptions),
 		)
 	}
+	if collectorOptions != nil {
+		headPodSet.Template.Spec.Containers = append(
+			headPodSet.Template.Spec.Containers,
+			historyServerCollectorContainer(collectorOptions),
+		)
+	}
 	podSets = append(podSets, headPodSet)
 
 	// workers
 	for index := range rayClusterSpec.WorkerGroupSpecs {
 		wgs := &rayClusterSpec.WorkerGroupSpecs[index]
-		count := int32(1)
-		if wgs.Replicas != nil {
-			count = *wgs.Replicas
-		}
-		if wgs.NumOfHosts > 1 {
-			count *= wgs.NumOfHosts
-		}
 		workerPodSet := kueue.PodSet{
 			Name:     kueue.NewPodSetReference(wgs.GroupName),
 			Template: *wgs.Template.DeepCopy(),
-			Count:    count,
+			Count:    effectiveWorkerCount(wgs),
 		}
 		if features.Enabled(features.TopologyAwareScheduling) {
 			topologyRequest, err := jobframework.NewPodSetTopologyRequest(&wgs.Template.ObjectMeta).Build()
@@ -111,6 +145,18 @@ func BuildPodSets(rayClusterSpec *rayv1.RayClusterSpec, annotations map[string]s
 				return nil, err
 			}
 			workerPodSet.TopologyRequest = topologyRequest
+		}
+		if features.Enabled(features.ElasticJobsViaWorkloadSlicesWithPartialReplicaScaleUp) &&
+			annotations[constants.ElasticJobScaleUpStrategyAnnotationKey] == constants.ElasticJobScaleUpStrategyPartial {
+			if wgs.MinReplicas != nil {
+				workerPodSet.MinCount = new(effectiveWorkerCount(wgs))
+			}
+		}
+		if collectorOptions != nil {
+			workerPodSet.Template.Spec.Containers = append(
+				workerPodSet.Template.Spec.Containers,
+				historyServerCollectorContainer(collectorOptions),
+			)
 		}
 		podSets = append(podSets, workerPodSet)
 	}
@@ -120,7 +166,7 @@ func BuildPodSets(rayClusterSpec *rayv1.RayClusterSpec, annotations map[string]s
 
 func accountForRedisCleanupInHeadPodSet(headPodSet *kueue.PodSet) error {
 	if len(headPodSet.Template.Spec.Containers) <= rayutils.RayContainerIndex {
-		return errors.New("cannot account for Redis cleanup resources: head pod template must include the Ray container")
+		return errRedisCleanupMissingRayContainer
 	}
 
 	headContainer := &headPodSet.Template.Spec.Containers[rayutils.RayContainerIndex]
@@ -175,6 +221,20 @@ func autoscalerContainer(opts *rayv1.AutoscalerOptions) corev1.Container {
 	}
 }
 
+// historyServerCollectorContainer returns a container mirroring the collector
+// that KubeRay injects into every head and worker Pod when History Server
+// collection is configured. Only the fields that affect quota and PodSpec
+// validation are kept: the image is required by ProvisioningRequest, and is
+// empty when unset because KubeRay rejects a missing collectorOptions.image.
+func historyServerCollectorContainer(opts *rayv1.CollectorOptions) corev1.Container {
+	collector := rayctrlcommon.BuildCollectorContainer(opts, rayv1.RayNodeType(""), "", "", "", nil)
+	return corev1.Container{
+		Name:      collector.Name,
+		Image:     collector.Image,
+		Resources: *collector.Resources.DeepCopy(),
+	}
+}
+
 func ExpectedPodSetsCount(rayClusterSpec *rayv1.RayClusterSpec) int {
 	return len(rayClusterSpec.WorkerGroupSpecs) + 1
 }
@@ -215,18 +275,14 @@ func UpdatePodSets(ctx context.Context, podSets []kueue.PodSet, c client.Client,
 
 					podSet, exists := podSetMap[podSetName]
 					if !exists {
-						return nil, fmt.Errorf("PodSet name mismatch: RayCluster %s has worker group %s which is not found in Ray object %s spec", rayClusterName, wgs.GroupName, object.GetName())
+						return nil, fmt.Errorf("%w: RayCluster %s has worker group %s which is not found in Ray object %s spec", errPodSetNameMismatch, rayClusterName, wgs.GroupName, object.GetName())
 					}
 
 					if wgs.Replicas == nil {
 						continue
 					}
 
-					// Calculate the count based on RayCluster's worker group replicas
-					count := *wgs.Replicas
-					if wgs.NumOfHosts > 1 {
-						count *= wgs.NumOfHosts
-					}
+					count := effectiveWorkerCount(wgs)
 
 					// Update the count in the PodSet only if it's different
 					if podSet.Count != count {
@@ -246,11 +302,11 @@ func UpdatePodSets(ctx context.Context, podSets []kueue.PodSet, c client.Client,
 	return podSets, nil
 }
 
-func UpdateRayClusterSpecToRunWithPodSetsInfo(rayClusterSpec *rayv1.RayClusterSpec, podSetsInfo []podset.PodSetInfo) error {
+func UpdateRayClusterSpecToRunWithPodSetsInfo(log logr.Logger, rayClusterSpec *rayv1.RayClusterSpec, podSetsInfo []podset.PodSetInfo) error {
 	// head
 	headPod := &rayClusterSpec.HeadGroupSpec.Template
 	info := podSetsInfo[0]
-	if err := podset.Merge(&headPod.ObjectMeta, &headPod.Spec, info); err != nil {
+	if err := podset.Merge(log, &headPod.ObjectMeta, &headPod.Spec, info); err != nil {
 		return err
 	}
 
@@ -258,7 +314,7 @@ func UpdateRayClusterSpecToRunWithPodSetsInfo(rayClusterSpec *rayv1.RayClusterSp
 	for index := range rayClusterSpec.WorkerGroupSpecs {
 		workerPod := &rayClusterSpec.WorkerGroupSpecs[index].Template
 		info := podSetsInfo[index+1]
-		if err := podset.Merge(&workerPod.ObjectMeta, &workerPod.Spec, info); err != nil {
+		if err := podset.Merge(log, &workerPod.ObjectMeta, &workerPod.Spec, info); err != nil {
 			return err
 		}
 	}
@@ -266,7 +322,16 @@ func UpdateRayClusterSpecToRunWithPodSetsInfo(rayClusterSpec *rayv1.RayClusterSp
 	return nil
 }
 
-func RestorePodSetsInfo(rayClusterSpec *rayv1.RayClusterSpec, podSetsInfo []podset.PodSetInfo) bool {
+func RestorePodSetsInfo(ctx context.Context, rayClusterSpec *rayv1.RayClusterSpec, podSetsInfo []podset.PodSetInfo) bool {
+	if expected := ExpectedPodSetsCount(rayClusterSpec); len(podSetsInfo) != expected {
+		ctrl.LoggerFrom(ctx).V(2).Info(
+			"Skipping pod set info restore because the pod set count does not match the admitted workload",
+			"expectedCount", expected,
+			"gotCount", len(podSetsInfo),
+		)
+		return false
+	}
+
 	// head
 	headPod := &rayClusterSpec.HeadGroupSpec.Template
 	changed := podset.RestorePodSpec(&headPod.ObjectMeta, &headPod.Spec, podSetsInfo[0])
@@ -395,7 +460,7 @@ func ParsePodSetReplicaSizes(annotation string) (map[kueue.PodSetReference]int32
 	}
 	var podSets []jobframework.PodSetReplicaSize
 	if err := json.Unmarshal([]byte(annotation), &podSets); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal %s annotation: %w", RayClusterPodsetReplicaSizesAnnotation, err)
+		return nil, fmt.Errorf("%w: %w", errUnmarshalPodSetReplicaSizes, err)
 	}
 	for _, ps := range podSets {
 		counts[ps.Name] = ps.Count
@@ -403,16 +468,7 @@ func ParsePodSetReplicaSizes(annotation string) (map[kueue.PodSetReference]int32
 	return counts, nil
 }
 
-// SerializePodSetCounts converts PodSets into a JSON byte slice of podSetReplicaSize entries.
-func SerializePodSetCounts(podSets []kueue.PodSet) ([]byte, error) {
-	sizes := make([]jobframework.PodSetReplicaSize, len(podSets))
-	for i, ps := range podSets {
-		sizes[i] = jobframework.PodSetReplicaSize{Name: ps.Name, Count: ps.Count}
-	}
-	return json.Marshal(sizes)
-}
-
-func GetWorkloadslicingRayClusterCustomAnnotations(ctx context.Context, c client.Client, jobObject client.Object, podSets []kueue.PodSet, rayClusterName string) (map[string]string, error) {
+func GetWorkloadslicingRayClusterCustomAnnotations(ctx context.Context, c client.Client, jobObject client.Object, rayClusterName string) (map[string]string, error) {
 	if workloadslicing.Enabled(jobObject) {
 		log := ctrl.LoggerFrom(ctx)
 
@@ -438,17 +494,9 @@ func GetWorkloadslicingRayClusterCustomAnnotations(ctx context.Context, c client
 			}
 		}
 
-		podSetsJSON, err := SerializePodSetCounts(podSets)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal updated podsets: %w", err)
-		}
-		annotations := map[string]string{
-			RayClusterPodsetReplicaSizesAnnotation: string(podSetsJSON),
-		}
 		if includeRayClusterGeneration {
-			annotations[RayClusterGenerationAnnotation] = rayClusterGeneration
+			return map[string]string{RayClusterGenerationAnnotation: rayClusterGeneration}, nil
 		}
-		return annotations, nil
 	}
 	return nil, nil
 }

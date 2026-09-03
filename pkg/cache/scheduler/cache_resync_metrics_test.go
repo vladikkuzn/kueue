@@ -102,7 +102,7 @@ func TestResyncCohortGaugeMetricsUsesUpdatedCustomLabels(t *testing.T) {
 	defer metrics.InitMetricVectors(nil)
 	features.SetFeatureGateDuringTest(t, features.CustomMetricLabels, true)
 
-	customLabels := metrics.NewCustomLabels([]configapi.ControllerMetricsCustomLabel{{Name: "team"}})
+	customLabels := metrics.NewCustomLabels([]configapi.ControllerMetricsCustomLabel{{Name: "team", SourceKind: new(configapi.SourceKindCohort)}})
 	cache := New(utiltesting.NewFakeClient(), WithCustomLabels(customLabels), WithFairSharing(true))
 
 	cache.AddOrUpdateResourceFlavor(log, utiltestingapi.MakeResourceFlavor("default").Obj())

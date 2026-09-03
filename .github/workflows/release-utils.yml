@@ -2,55 +2,206 @@ on:
   issue_comment:
     types: [created]
 
+concurrency:
+  group: release-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
-  sync-notes:
+  validate-actions:
+    name: Validate Automation Actions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    if: |
+      github.event.issue.pull_request == null &&
+      (contains(github.event.comment.body, '/sync-release-notes') ||
+       contains(github.event.comment.body, '/create-release-candidate') ||
+       contains(github.event.comment.body, '/create-release-branch') ||
+       contains(github.event.comment.body, '/tag-release') ||
+       contains(github.event.comment.body, '/create-draft-release') ||
+       contains(github.event.comment.body, '/wait-for-images') ||
+       contains(github.event.comment.body, '/wait-for-prod-images') ||
+       contains(github.event.comment.body, '/publish-release'))
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: false
+
+      - name: Validate Actions Folder
+        id: validate
+        run: |
+          REQUIRED_ITEMS=(
+            ".github/actions/create-draft-release/action.yml"
+            ".github/actions/create-release-tag/action.yml"
+            ".github/actions/generate-openvex/action.yml"
+            ".github/actions/generate-sbom/action.yml"
+            ".github/actions/publish-release/action.yml"
+            ".github/actions/report-result/action.yml"
+            "hack/releasing/log_to_issue.py"
+          )
+          MISSING=()
+          for item in "${REQUIRED_ITEMS[@]}"; do
+            if [ ! -f "$item" ]; then
+              MISSING+=("$item")
+            fi
+          done
+
+          if [ ${#MISSING[@]} -ne 0 ]; then
+            echo "error_message=❌ Missing required automation actions/scripts after checkout: ${MISSING[*]}" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Report Validation Failure
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ERR_MSG: ${{ steps.validate.outputs.error_message }}
+        run: |
+          BODY="${ERR_MSG:-❌ Automation actions validation failed: the actions folder is missing or invalid.}
+
+          See the [failed workflow run](${RUN_URL}) for details."
+          gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+
+  authorize:
+    name: Authorize and Parse Command
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: validate-actions
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      command: ${{ steps.parse.outputs.command }}
+      version: ${{ steps.parse.outputs.version }}
+      branch: ${{ steps.parse.outputs.branch }}
+      changelog: ${{ steps.parse.outputs.changelog }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: false
+
+      - name: Verify Actor Authorization
+        id: auth
+        env:
+          ACTOR: ${{ github.actor }}
+          OWNERS_FILE: OWNERS_ALIASES
+        run: |
+          if [ ! -f "$OWNERS_FILE" ]; then
+            echo "error_message=❌ $OWNERS_FILE not found." >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          if ! python3 -c "
+          import os, yaml
+
+          aliases = yaml.safe_load(open(os.environ['OWNERS_FILE'])).get('aliases', {})
+          authorized = set(aliases.get('release-team', [])) | set(aliases.get('kueue-approvers', []))
+          raise SystemExit(0 if os.environ['ACTOR'] in authorized else 1)
+          "; then
+            echo "error_message=❌ Actor $ACTOR is not authorized." >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Parse and Validate Command and Version
+        id: parse
+        env:
+          BODY: ${{ github.event.comment.body }}
+          COMMENT: ${{ github.event.comment.html_url }}
+          TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          if [[ ! "$TITLE" =~ ^Release\ (v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "error_message=❌ Invalid issue title: \`$TITLE\`. Expected format: \`Release vX.Y.Z\`." >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          VERSION="${BASH_REMATCH[1]}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "$VERSION" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+ ]]; then
+            echo "branch=release-${BASH_REMATCH[1]}.${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+          fi
+
+          COMMAND=""
+          if printf '%s' "$BODY" | tr -d '\r' | grep -qE '^/sync-release-notes[[:space:]]*$'; then
+            COMMAND="sync-release-notes"
+          elif printf '%s' "$BODY" | tr -d '\r' | grep -qE '^/create-release-candidate[[:space:]]*$'; then
+            COMMAND="create-release-candidate"
+          elif printf '%s' "$BODY" | tr -d '\r' | grep -qE '^/create-release-branch[[:space:]]*$'; then
+            COMMAND="create-release-branch"
+          elif printf '%s' "$BODY" | tr -d '\r' | grep -qE '^/tag-release[[:space:]]*$'; then
+            COMMAND="tag-release"
+          elif printf '%s' "$BODY" | tr -d '\r' | grep -qE '^/create-draft-release[[:space:]]*$'; then
+            COMMAND="create-draft-release"
+          elif printf '%s' "$BODY" | tr -d '\r' | grep -qE '^/wait-for-images[[:space:]]*$'; then
+            COMMAND="wait-for-images"
+          elif printf '%s' "$BODY" | tr -d '\r' | grep -qE '^/wait-for-prod-images[[:space:]]*$'; then
+            COMMAND="wait-for-prod-images"
+          elif printf '%s' "$BODY" | tr -d '\r' | grep -qE '^/publish-release[[:space:]]*$'; then
+            COMMAND="publish-release"
+          else
+            echo "error_message=❌ Invalid command format in comment: $COMMENT." >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "command=$COMMAND" >> "$GITHUB_OUTPUT"
+          
+          CHANGELOG="$(echo "$ISSUE_BODY" | sed -n '/<!-- release-changelog-start -->/,/<!-- release-changelog-end -->/p' | sed -n '/^```markdown$/,/^```$/p' | sed '/^```markdown$/d;/^```$/d')"
+          EOF_DELIM="$(openssl rand -hex 16)"
+          {
+            echo "changelog<<${EOF_DELIM}"
+            printf '%s\n' "$CHANGELOG"
+            echo "${EOF_DELIM}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report Parse Failure
+        if: ${{ failure() }}
+        uses: ./.github/actions/report-result
+        with:
+          alias: "Authorization"
+          message: ${{ steps.parse.outputs.error_message || steps.auth.outputs.error_message }}
+
+      - name: Clear Authorization Log
+        if: ${{ success() }}
+        uses: ./.github/actions/report-result
+        with:
+          alias: "Authorization"
+          cleanup: true
+      
+      - name: Log command start
+        if: ${{ success() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ steps.parse.outputs.command }}
+          message: "🔄 Authorization successful. Running command..."
+          keep-history: false
+
+  sync-release-notes:
     name: Sync Release Notes
     runs-on: ubuntu-latest
-    if: ${{ startsWith(github.event.comment.body, '/sync-release-notes') }}
+    needs: authorize
+    timeout-minutes: 30
+    if: ${{ needs.authorize.outputs.command == 'sync-release-notes' }}
     permissions:
       contents: read
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-
-      - name: Verify Actor Authorization
-        env:
-          ACTOR: ${{ github.actor }}
-        run: |
-          TEAM_FILE="release-team.json"
-          if [ ! -f "$TEAM_FILE" ]; then
-            echo "Error: Allowed actors list file $TEAM_FILE not found."
-            exit 1
-          fi
-          if ! jq -e --arg actor "$ACTOR" '. | index($actor)' "$TEAM_FILE" > /dev/null; then
-            echo "Error: Actor $ACTOR is not authorized."
-            exit 1
-          fi
-
-      - name: Validate Command and Issue Title
-        id: validate
-        env:
-          BODY: ${{ github.event.comment.body }}
-          TITLE: ${{ github.event.issue.title }}
-        run: |
-          if [[ ! "$BODY" =~ ^/sync-release-notes[[:space:]]*$ ]]; then
-            echo "Error: Invalid command format. Use /sync-release-notes without arguments."
-            exit 1
-          fi
-
-          if [[ ! "$TITLE" =~ ^Release\ (v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "Error: Issue title '$TITLE' does not match 'Release vX.Y.Z'"
-            exit 1
-          fi
-
-          VERSION="${BASH_REMATCH[1]}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          ref: main
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: 'go.mod'
 
@@ -60,13 +211,450 @@ jobs:
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Run Sync Notes
+        id: sync
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UPSTREAM_REMOTE: origin
-          VERSION: ${{ steps.validate.outputs.version }}
+          VERSION: ${{ needs.authorize.outputs.version }}
         run: |
           # Configure git identity
           git config --global user.name "kueue-release-bot"
           git config --global user.email "kueue-release-bot@kubernetes.io"
           
+          set +e
           yes y | ./hack/releasing/sync-notes.sh "$VERSION"
+          EXIT_CODE=${PIPESTATUS[1]}
+          set -e
+          
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "message=❌ Failed to sync release notes for version \`$VERSION\`." >> "$GITHUB_OUTPUT"
+            exit $EXIT_CODE
+          fi
+          echo "message=✅ Release notes for version \`$VERSION\` have been synced." >> "$GITHUB_OUTPUT"
+
+      - name: Report Success
+        if: ${{ success() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.sync.outputs.message || '✅ Release notes have been synced.' }}
+
+      - name: Report Failure
+        if: ${{ failure() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.sync.outputs.message || '❌ Failed to sync release notes.' }}
+
+  create-release-candidate:
+    name: Create Release Candidate
+    runs-on: ubuntu-latest
+    needs: authorize
+    timeout-minutes: 30
+    if: ${{ needs.authorize.outputs.command == 'create-release-candidate' }}
+    env:
+      VERSION: ${{ needs.authorize.outputs.version }}
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Check if Release is Already Published
+        id: check_published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          RELEASE_STATE=$(gh release view "$VERSION" --repo "$TARGET_REPO" --json isDraft \
+            --jq 'if .isDraft then "draft" else "published" end' 2>/dev/null || echo "")
+
+          if [ "$RELEASE_STATE" = "published" ]; then
+            BODY="❌ Release \`$VERSION\` has already been published. Skipping release candidate creation."
+            echo "message=$BODY" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Calculate Release Candidate Version
+        id: rc-version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LAST_RC=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts=true --limit 1000 --json tagName --jq '.[].tagName' \
+            | grep -oP "(?<=${VERSION}-rc\.)\d+" | sort -n | tail -1)
+          if [ -z "$LAST_RC" ]; then
+            NEXT_RC=0
+          else
+            NEXT_RC=$((LAST_RC + 1))
+          fi
+          echo "version=${VERSION}-rc.${NEXT_RC}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and Push Tag
+        id: tag
+        uses: ./.github/actions/create-release-tag
+        with:
+          version: ${{ steps.rc-version.outputs.version }}
+          changelog: ${{ needs.authorize.outputs.changelog }}
+          repo: ${{ github.repository }}
+
+      - name: Create Draft Release
+        id: draft
+        uses: ./.github/actions/create-draft-release
+        with:
+          version: ${{ steps.rc-version.outputs.version }}
+          changelog: ${{ needs.authorize.outputs.changelog }}
+          repo: ${{ github.repository }}
+          prerelease: true
+
+      - name: Publish Release
+        id: publish
+        uses: ./.github/actions/publish-release
+        with:
+          version: ${{ steps.rc-version.outputs.version }}
+          repo: ${{ github.repository }}
+          update-release-issue: false
+
+      - name: Report Success
+        if: ${{ success() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.publish.outputs.message }}
+
+      - name: Report Failure
+        if: ${{ failure() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.check_published.outputs.message || steps.tag.outputs.message || steps.draft.outputs.message || steps.publish.outputs.message || '❌ Failed to create release candidate.' }}
+  
+  create-release-branch:
+    name: Create Release Branch
+    runs-on: ubuntu-latest
+    needs: authorize
+    timeout-minutes: 10
+    if: ${{ needs.authorize.outputs.command == 'create-release-branch' }}
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: false
+
+      - name: Create and Push Release Branch
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+          BRANCH: ${{ needs.authorize.outputs.branch }}
+        run: |
+          # Block patch releases
+          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.([0-9]+)$ ]]; then
+            PATCH="${BASH_REMATCH[1]}"
+            if [ "$PATCH" != "0" ]; then
+              echo "message=❌ Release branch creation is only supported for major and minor releases (vX.Y.0). Patch releases like \`$VERSION\` do not require a new release branch." >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+          fi
+
+          # Configure git identity
+          git config --global user.name "kueue-release-bot"
+          git config --global user.email "kueue-release-bot@kubernetes.io"
+          gh auth setup-git
+
+          # Check if branch already exists
+          if git ls-remote --heads origin "$BRANCH" | grep -q "refs/heads/$BRANCH"; then
+            echo "message=✅ Release branch \`$BRANCH\` already exists." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Create and push the branch from main
+          set +e
+          PUSH_EXIT=0
+          git checkout -b "$BRANCH"
+          BRANCH_EXIT=$?
+          if [ $BRANCH_EXIT -eq 0 ]; then
+            git push origin "$BRANCH"
+            PUSH_EXIT=$?
+          fi
+          set -e
+
+          if [ $BRANCH_EXIT -ne 0 ] || [ $PUSH_EXIT -ne 0 ]; then
+            echo "message=❌ Failed to create release branch \`$BRANCH\`." >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "message=✅ Release branch \`$BRANCH\` has been successfully created from \`main\`." >> "$GITHUB_OUTPUT"
+
+      - name: Report Success
+        if: ${{ success() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.push.outputs.message }}
+
+      - name: Report Failure
+        if: ${{ failure() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.push.outputs.message || '❌ Command failed.' }}
+
+  wait-for-images:
+    name: Wait for Images
+    runs-on: ubuntu-latest
+    needs: authorize
+    timeout-minutes: 60
+    if: | 
+      needs.authorize.outputs.command == 'wait-for-images' ||
+      needs.authorize.outputs.command == 'wait-for-prod-images'
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: false
+
+      - name: Install Crane
+        uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
+
+      - name: Run Wait for Images Script
+        id: wait_images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+          COMMAND: ${{ needs.authorize.outputs.command }}
+        run: |
+          # Initialize an empty array for arguments
+          ARGS=()
+          
+          # Append --prod if the command matches the production condition,
+          if [ "$COMMAND" = "wait-for-prod-images" ]; then
+            ARGS+=("--prod")
+          fi
+          
+          # Set an one hour timeout to prevent running indefinitely.
+          ARGS+=("--timeout" "3600s")
+          
+          # Append the version to the arguments
+          ARGS+=("$VERSION")
+          
+          # Direct output to a log file while still printing it to the console.
+          set +e
+          ./hack/releasing/wait_for_images.sh "${ARGS[@]}" 2>&1 | tee output.log
+          SCRIPT_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          
+          # Handle Failures.
+          if [ $SCRIPT_EXIT_CODE -ne 0 ]; then
+            # Extract the raw error line from the logs.
+            ERROR_LINE=$(sed -n 's/^!!! Error: //p' output.log)
+
+            # If an explicit script error message was found
+            if [ -n "$ERROR_LINE" ]; then
+              echo "message=❌ $ERROR_LINE" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+          
+            # For any other unhandled crash
+            echo "message=❌ Wait for images failed. Check workflow logs for details." >> "$GITHUB_OUTPUT"
+            exit $SCRIPT_EXIT_CODE
+          fi
+          
+          # Extract from the LAST "Images:" block to the end of the file.
+          # Format it cleanly as a Markdown code block inside the GITHUB_OUTPUT.
+          IMAGES_READY=$(awk '/^Images:/ { out = ""; flag = 1 } flag { out = out $0 "\n" } END { printf "### Images Ready\n```text\n%s```", out }' output.log)
+          
+          echo "message<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$IMAGES_READY" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Report Success
+        if: ${{ success() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.wait_images.outputs.message }}
+
+      - name: Report Failure
+        if: ${{ failure() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.wait_images.outputs.message || '❌ Wait for images failed.' }}
+
+  tag-release:
+    name: Tag Release
+    runs-on: ubuntu-latest
+    needs: authorize
+    timeout-minutes: 10
+    if: ${{ needs.authorize.outputs.command == 'tag-release' }}
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.authorize.outputs.branch }}
+          persist-credentials: false
+
+      - name: Checkout automation actions from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: .automation
+          sparse-checkout: |
+            .github/actions
+            hack/releasing
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Create and Push Tag
+        id: tag
+        uses: ./.automation/.github/actions/create-release-tag
+        with:
+          version: ${{ needs.authorize.outputs.version }}
+          changelog: ${{ needs.authorize.outputs.changelog }}
+          repo: ${{ github.repository }}
+
+      - name: Report Success
+        if: ${{ success() }}
+        uses: ./.automation/.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.tag.outputs.message || '✅ Release tag created.' }}
+
+      - name: Report Failure
+        if: ${{ failure() }}
+        uses: ./.automation/.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.tag.outputs.message || '❌ Failed to create release tag.' }}
+
+  create-draft-release:
+    name: Create Draft Release
+    runs-on: ubuntu-latest
+    needs: authorize
+    timeout-minutes: 30
+    if: ${{ needs.authorize.outputs.command == 'create-draft-release' }}
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.authorize.outputs.version }}
+          persist-credentials: false
+
+      - name: Checkout automation actions from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: .automation
+          sparse-checkout: |
+            .github/actions
+            hack/releasing
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Create Draft Release
+        id: draft
+        uses: ./.automation/.github/actions/create-draft-release
+        with:
+          version: ${{ needs.authorize.outputs.version }}
+          changelog: ${{ needs.authorize.outputs.changelog }}
+          repo: ${{ github.repository }}
+          prerelease: false
+
+      - name: Generate OpenVEX
+        uses: ./.automation/.github/actions/generate-openvex
+        with:
+          tag: ${{ needs.authorize.outputs.version }}
+
+      - name: Generate SBOM
+        uses: ./.automation/.github/actions/generate-sbom
+        with:
+          tag: ${{ needs.authorize.outputs.version }}
+
+      - name: Report Success
+        if: ${{ success() }}
+        uses: ./.automation/.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.draft.outputs.message || '✅ Draft release created.' }}
+
+      - name: Report Failure
+        if: ${{ failure() }}
+        uses: ./.automation/.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.draft.outputs.message || '❌ Failed to create draft release.' }}
+
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: authorize
+    timeout-minutes: 10
+    if: ${{ needs.authorize.outputs.command == 'publish-release' }}
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: false
+
+      - name: Publish Release
+        id: publish
+        uses: ./.github/actions/publish-release
+        with:
+          version: ${{ needs.authorize.outputs.version }}
+          repo: ${{ github.repository }}
+          update-release-issue: true
+
+      - name: Report Success
+        if: ${{ success() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.publish.outputs.message }}
+
+      - name: Report Failure
+        if: ${{ failure() }}
+        uses: ./.github/actions/report-result
+        with:
+          command: ${{ needs.authorize.outputs.command }}
+          message: ${{ steps.publish.outputs.message || '❌ Failed to publish release.' }}

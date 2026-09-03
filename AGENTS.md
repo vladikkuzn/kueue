@@ -38,6 +38,7 @@ Kueue follows the [Kubernetes AI Tool Usage Policy](https://www.kubernetes.dev/d
 - **Disclose AI usage** in the PR description.
 - **Disclose AI usage** when commenting or filing issues.
 - **No AI authorship markers.** Do not add AI co-author lines, `assisted-by`, `co-developed`, or similar commit trailers.
+- **No auto-close keywords or `#` mentions in commit messages.** [Keywords which can automatically close issues](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue) (for example `Fixes #123`) and `#` mentions are not allowed in commit messages — Prow flags them with the `do-not-merge/invalid-commit-message` label. Put issue references in the PR description instead.
 - Always use `PULL_REQUEST_TEMPLATE.md` or `ISSUE_TEMPLATE`, in the .github directory, before creating pull requests or issues.
 
 ## Skills
@@ -53,3 +54,7 @@ When a skill is triggered, read the corresponding SKILL.md file directly and fol
 Code review patterns are in [cmd/experimental/skills/reviewer/README.md](cmd/experimental/skills/reviewer/README.md). Apply these proactively when reviewing any kueue PR or code change.
 
 @cmd/experimental/skills/reviewer/README.md
+
+## Coding Guidelines
+
+Follow the project's coding conventions for product and test code: [Coding Guidelines](site/content/en/community/contribution_guidelines/coding_guidelines.md). Ensure that you follow the core Kubernetes guidelines on deprecation policy, API changes, and feature gates as detailed in the document.

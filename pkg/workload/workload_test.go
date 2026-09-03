@@ -20,28 +20,32 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/component-base/featuregate"
 	testingclock "k8s.io/utils/clock/testing"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	config "sigs.k8s.io/kueue/apis/config/v1beta2"
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
+	queueafs "sigs.k8s.io/kueue/pkg/cache/queue/afs"
 	controllerconstants "sigs.k8s.io/kueue/pkg/controller/constants"
 	"sigs.k8s.io/kueue/pkg/features"
 	"sigs.k8s.io/kueue/pkg/resources"
 	"sigs.k8s.io/kueue/pkg/util/admissioncheck"
+	utilqueue "sigs.k8s.io/kueue/pkg/util/queue"
 	utiltas "sigs.k8s.io/kueue/pkg/util/tas"
 	utiltesting "sigs.k8s.io/kueue/pkg/util/testing"
 	utiltestingapi "sigs.k8s.io/kueue/pkg/util/testing/v1beta2"
@@ -148,11 +152,33 @@ func TestNewInfo(t *testing.T) {
 				TotalRequests: []PodSetResources{
 					{
 						Name: kueue.DefaultPodSetName,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    10,
 							corev1.ResourceMemory: 512 * 1024,
-						},
+						}),
 						Count: 1,
+					},
+				},
+			},
+		},
+		"negative request floored to zero in total requests": {
+			workload: *utiltestingapi.MakeWorkload("", "").
+				PodSets(
+					*utiltestingapi.MakePodSet(kueue.DefaultPodSetName, 2).
+						Request(corev1.ResourceCPU, "-10m").
+						Request(corev1.ResourceMemory, "512Ki").
+						Obj(),
+				).
+				Obj(),
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{
+					{
+						Name: kueue.DefaultPodSetName,
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+							corev1.ResourceCPU:    0,
+							corev1.ResourceMemory: 2 * 512 * 1024,
+						}),
+						Count: 2,
 					},
 				},
 			},
@@ -176,10 +202,10 @@ func TestNewInfo(t *testing.T) {
 				TotalRequests: []PodSetResources{
 					{
 						Name: kueue.DefaultPodSetName,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    3 * 10,
 							corev1.ResourceMemory: 3 * 512 * 1024,
-						},
+						}),
 						Count: 3,
 					},
 				},
@@ -204,10 +230,10 @@ func TestNewInfo(t *testing.T) {
 				TotalRequests: []PodSetResources{
 					{
 						Name: kueue.DefaultPodSetName,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    5 * 10,
 							corev1.ResourceMemory: 5 * 512 * 1024,
-						},
+						}),
 						Count: 5,
 					},
 				},
@@ -227,9 +253,9 @@ func TestNewInfo(t *testing.T) {
 					{
 						Name:  kueue.DefaultPodSetName,
 						Count: 2147483647,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 9223372036854775807,
-						},
+						}),
 					},
 				},
 			},
@@ -258,7 +284,7 @@ func TestNewInfo(t *testing.T) {
 								corev1.ResourceCPU:    resource.MustParse("10m"),
 								corev1.ResourceMemory: resource.MustParse("512Ki"),
 							},
-							Count: ptr.To[int32](1),
+							Count: new(int32(1)),
 						},
 						kueue.PodSetAssignment{
 							Name: "workers",
@@ -267,7 +293,7 @@ func TestNewInfo(t *testing.T) {
 								corev1.ResourceMemory: resource.MustParse("3Mi"),
 								"ex.com/gpu":          resource.MustParse("3"),
 							},
-							Count: ptr.To[int32](3),
+							Count: new(int32(3)),
 						},
 					).
 					Obj(), now).
@@ -277,10 +303,10 @@ func TestNewInfo(t *testing.T) {
 				TotalRequests: []PodSetResources{
 					{
 						Name: "driver",
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    10,
 							corev1.ResourceMemory: 512 * 1024,
-						},
+						}),
 						Flavors: map[corev1.ResourceName]kueue.ResourceFlavorReference{
 							corev1.ResourceCPU: "on-demand",
 						},
@@ -288,11 +314,11 @@ func TestNewInfo(t *testing.T) {
 					},
 					{
 						Name: "workers",
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    15,
 							corev1.ResourceMemory: 3 * 1024 * 1024,
 							"ex.com/gpu":          3,
-						},
+						}),
 						Count: 3,
 					},
 				},
@@ -335,22 +361,22 @@ func TestNewInfo(t *testing.T) {
 							corev1.ResourceMemory:     "tas",
 							"example.com/logical-gpu": "quota",
 						},
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:        2000,
 							corev1.ResourceMemory:     2 * 1024 * 1024 * 1024,
 							"example.com/logical-gpu": 2,
-						},
+						}),
 						Count: 2,
 						TopologyRequest: &TopologyRequest{
 							Levels: []string{corev1.LabelHostname},
 							DomainRequests: []TopologyDomainRequests{{
 								Values: []string{"node-a"},
-								SinglePodRequests: resources.Requests{
+								SinglePodRequests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 									corev1.ResourceCPU:           1000,
 									corev1.ResourceMemory:        1024 * 1024 * 1024,
 									"example.com/gpu":            1,
 									"networking.example.com/vpc": 1,
-								},
+								}),
 								Count: 2,
 							}},
 						},
@@ -390,10 +416,10 @@ func TestNewInfo(t *testing.T) {
 							corev1.ResourceCPU:    "f1",
 							corev1.ResourceMemory: "f1",
 						},
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    3 * 10,
 							corev1.ResourceMemory: 3 * 10 * 1024,
-						},
+						}),
 						Count: 3,
 					},
 				},
@@ -431,10 +457,10 @@ func TestNewInfo(t *testing.T) {
 							corev1.ResourceCPU:    "f1",
 							corev1.ResourceMemory: "f1",
 						},
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    5 * 10,
 							corev1.ResourceMemory: 5 * 10 * 1024,
-						},
+						}),
 						Count: 5,
 					},
 				},
@@ -474,11 +500,52 @@ func TestNewInfo(t *testing.T) {
 							corev1.ResourceCPU:    "f1",
 							corev1.ResourceMemory: "f1",
 						},
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    2 * 10,
 							corev1.ResourceMemory: 2 * 10 * 1024,
-						},
+						}),
 						Count: 2,
+					},
+				},
+			},
+		},
+		"admitted with stale reclaim exceeding scaled-down podSet count": {
+			workload: *utiltestingapi.MakeWorkload("", "").
+				PodSets(
+					*utiltestingapi.MakePodSet(kueue.DefaultPodSetName, 2).
+						Request(corev1.ResourceCPU, "10m").
+						Request(corev1.ResourceMemory, "10Ki").
+						Obj(),
+				).
+				ReserveQuotaAt(
+					utiltestingapi.MakeAdmission("").
+						PodSets(utiltestingapi.MakePodSetAssignment(kueue.DefaultPodSetName).
+							Assignment(corev1.ResourceCPU, "f1", "50m").
+							Assignment(corev1.ResourceMemory, "f1", "50Ki").
+							Count(5).
+							Obj()).
+						Obj(), now,
+				).
+				ReclaimablePods(
+					kueue.ReclaimablePod{
+						Name:  kueue.DefaultPodSetName,
+						Count: 5,
+					},
+				).
+				Obj(),
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{
+					{
+						Name: kueue.DefaultPodSetName,
+						Flavors: map[corev1.ResourceName]kueue.ResourceFlavorReference{
+							corev1.ResourceCPU:    "f1",
+							corev1.ResourceMemory: "f1",
+						},
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+							corev1.ResourceCPU:    0,
+							corev1.ResourceMemory: 0,
+						}),
+						Count: 0,
 					},
 				},
 			},
@@ -509,10 +576,10 @@ func TestNewInfo(t *testing.T) {
 							corev1.ResourceCPU:    "f1",
 							corev1.ResourceMemory: "f1",
 						},
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    3 * 10,
 							corev1.ResourceMemory: 3 * 10 * 1024,
-						},
+						}),
 						Count: 3,
 					},
 				},
@@ -529,10 +596,10 @@ func TestNewInfo(t *testing.T) {
 				TotalRequests: []PodSetResources{
 					{
 						Name: kueue.DefaultPodSetName,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    10,
 							corev1.ResourceMemory: 512 * 1024,
-						},
+						}),
 						Count: 1,
 					},
 				},
@@ -565,7 +632,7 @@ func TestNewInfo(t *testing.T) {
 			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{
 				{
 					Input:    "nvidia.com/mig-1g.5gb",
-					Strategy: ptr.To(config.Replace),
+					Strategy: new(config.Replace),
 					Outputs: corev1.ResourceList{
 						"example.com/accelerator-memory": resource.MustParse("5Ki"),
 						"example.com/credits":            resource.MustParse("10"),
@@ -573,7 +640,7 @@ func TestNewInfo(t *testing.T) {
 				},
 				{
 					Input:    "nvidia.com/mig-2g.10gb",
-					Strategy: ptr.To(config.Replace),
+					Strategy: new(config.Replace),
 					Outputs: corev1.ResourceList{
 						"example.com/accelerator-memory": resource.MustParse("10Ki"),
 						"example.com/credits":            resource.MustParse("15"),
@@ -581,7 +648,7 @@ func TestNewInfo(t *testing.T) {
 				},
 				{
 					Input:    "nvidia.com/gpu",
-					Strategy: ptr.To(config.Retain),
+					Strategy: new(config.Retain),
 					Outputs: corev1.ResourceList{
 						"example.com/accelerator-memory": resource.MustParse("40Ki"),
 						"example.com/credits":            resource.MustParse("100"),
@@ -589,7 +656,7 @@ func TestNewInfo(t *testing.T) {
 				},
 				{
 					Input:      "nvidia.com/vgpucores",
-					Strategy:   ptr.To(config.Replace),
+					Strategy:   new(config.Replace),
 					MultiplyBy: "nvidia.com/vgpu",
 					Outputs: corev1.ResourceList{
 						"nvidia.com/total-vgpucores": resource.MustParse("1"),
@@ -597,7 +664,7 @@ func TestNewInfo(t *testing.T) {
 				},
 				{
 					Input:      "nvidia.com/vgpumem",
-					Strategy:   ptr.To(config.Replace),
+					Strategy:   new(config.Replace),
 					MultiplyBy: "nvidia.com/vgpu",
 					Outputs: corev1.ResourceList{
 						"nvidia.com/total-vgpumem": resource.MustParse("1"),
@@ -608,40 +675,361 @@ func TestNewInfo(t *testing.T) {
 				TotalRequests: []PodSetResources{
 					{
 						Name: "a",
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 1000,
 							corev1.ResourceName("example.com/accelerator-memory"): 20 * 1024,
 							corev1.ResourceName("example.com/credits"):            35,
-						},
+						}),
 						Count: 1,
 					},
 					{
 						Name: "b",
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 4 * 1000,
 							corev1.ResourceName("example.com/accelerator-memory"): 80 * 1024,
 							corev1.ResourceName("example.com/credits"):            200,
 							corev1.ResourceName("nvidia.com/gpu"):                 2,
-						},
+						}),
 						Count: 2,
 					},
 					{
 						Name: "c",
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceName("nvidia.com/vgpu"):            2,
 							corev1.ResourceName("nvidia.com/total-vgpucores"): 2 * 20,
 							corev1.ResourceName("nvidia.com/total-vgpumem"):   2 * 1024,
-						},
+						}),
 						Count: 1,
 					},
 					{
 						Name: "d",
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceName("nvidia.com/vgpu"):            2 * 2,
 							corev1.ResourceName("nvidia.com/total-vgpucores"): 2 * 2 * 30,
 							corev1.ResourceName("nvidia.com/total-vgpumem"):   2 * 2 * 2048,
-						},
+						}),
 						Count: 2,
+					},
+				},
+			},
+		},
+		// A negative output factor is how a per-unit allowance is written: the
+		// charge is what the request exceeds it by. These three are the same
+		// configuration at, above and below the allowance.
+		"transformAllowanceAboveIt": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(*utiltestingapi.MakePodSet("a", 1).
+					Request("nvidia.com/gpumem", "2048").
+					Request("nvidia.com/gpu", "2").Obj()).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{
+				{
+					Input:      "nvidia.com/gpumem",
+					Strategy:   new(config.Replace),
+					MultiplyBy: "nvidia.com/gpu",
+					Outputs:    corev1.ResourceList{"quota.example.com/gpu-memory-overage": resource.MustParse("1")},
+				},
+				{
+					Input:    "nvidia.com/gpu",
+					Strategy: new(config.Retain),
+					Outputs:  corev1.ResourceList{"quota.example.com/gpu-memory-overage": resource.MustParse("-1024")},
+				},
+			})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{{
+					Name: "a",
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+						corev1.ResourceName("quota.example.com/gpu-memory-overage"): 2048,
+						corev1.ResourceName("nvidia.com/gpu"):                       2,
+					}),
+					Count: 1,
+				}},
+			},
+		},
+		"transformAllowanceExactlyAtIt": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(*utiltestingapi.MakePodSet("a", 1).
+					Request("nvidia.com/gpumem", "1024").
+					Request("nvidia.com/gpu", "2").Obj()).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{
+				{
+					Input:      "nvidia.com/gpumem",
+					Strategy:   new(config.Replace),
+					MultiplyBy: "nvidia.com/gpu",
+					Outputs:    corev1.ResourceList{"quota.example.com/gpu-memory-overage": resource.MustParse("1")},
+				},
+				{
+					Input:    "nvidia.com/gpu",
+					Strategy: new(config.Retain),
+					Outputs:  corev1.ResourceList{"quota.example.com/gpu-memory-overage": resource.MustParse("-1024")},
+				},
+			})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{{
+					Name: "a",
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+						corev1.ResourceName("quota.example.com/gpu-memory-overage"): 0,
+						corev1.ResourceName("nvidia.com/gpu"):                       2,
+					}),
+					Count: 1,
+				}},
+			},
+		},
+		"transformAllowanceUnderIt": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(*utiltestingapi.MakePodSet("a", 1).
+					Request("nvidia.com/gpumem", "512").
+					Request("nvidia.com/gpu", "2").Obj()).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{
+				{
+					Input:      "nvidia.com/gpumem",
+					Strategy:   new(config.Replace),
+					MultiplyBy: "nvidia.com/gpu",
+					Outputs:    corev1.ResourceList{"quota.example.com/gpu-memory-overage": resource.MustParse("1")},
+				},
+				{
+					Input:    "nvidia.com/gpu",
+					Strategy: new(config.Retain),
+					Outputs:  corev1.ResourceList{"quota.example.com/gpu-memory-overage": resource.MustParse("-1024")},
+				},
+			})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{{
+					Name: "a",
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+						corev1.ResourceName("quota.example.com/gpu-memory-overage"): 0,
+						corev1.ResourceName("nvidia.com/gpu"):                       2,
+					}),
+					Count: 1,
+				}},
+			},
+		},
+		// An allowance is spent against what the transformations generate, and
+		// nothing else. Here it would otherwise come off a request the PodSet
+		// made directly under the same name.
+		"transformAllowanceDoesNotReachADirectRequest": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(*utiltestingapi.MakePodSet("a", 1).
+					Request("example.com/gpu", "8").
+					Request("example.com/credit", "3").Obj()).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{{
+				Input:    "example.com/credit",
+				Strategy: new(config.Replace),
+				Outputs:  corev1.ResourceList{"example.com/gpu": resource.MustParse("-1")},
+			}})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{{
+					Name: "a",
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+						corev1.ResourceName("example.com/gpu"): 8,
+					}),
+					Count: 1,
+				}},
+			},
+		},
+		// An output sharing a name with something the PodSet requests directly
+		// used to be kept or dropped by the order the input map was walked.
+		"transformOutputSharingANameWithARequestIsAdded": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(*utiltestingapi.MakePodSet("a", 1).
+					Request("example.com/gpu", "1").
+					Request("example.com/credit", "1").Obj()).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{{
+				Input:    "example.com/credit",
+				Strategy: new(config.Replace),
+				Outputs:  corev1.ResourceList{"example.com/gpu": resource.MustParse("1")},
+			}})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{{
+					Name: "a",
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+						corev1.ResourceName("example.com/gpu"): 2,
+					}),
+					Count: 1,
+				}},
+			},
+		},
+		// And one naming its own retained input used to be overwritten by the
+		// retain assignment every time.
+		"transformOutputSharingANameWithItsRetainedInputIsAdded": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(*utiltestingapi.MakePodSet("a", 1).
+					Request("example.com/gpu", "1").Obj()).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{{
+				Input:    "example.com/gpu",
+				Strategy: new(config.Retain),
+				Outputs:  corev1.ResourceList{"example.com/gpu": resource.MustParse("5")},
+			}})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{{
+					Name: "a",
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+						corev1.ResourceName("example.com/gpu"): 6,
+					}),
+					Count: 1,
+				}},
+			},
+		},
+		"transformRetainWithMultiplyBy": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(
+					*utiltestingapi.MakePodSet("a", 1).
+						Request("example.com/gpumem", "1024").
+						Request("example.com/gpu", "2").
+						Obj(),
+				).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{
+				{
+					Input:      "example.com/gpumem",
+					Strategy:   new(config.Retain),
+					MultiplyBy: "example.com/gpu",
+					Outputs: corev1.ResourceList{
+						"example.com/gpumem-quota": resource.MustParse("1"),
+					},
+				},
+			})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{
+					{
+						Name: "a",
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+							// Retain keeps gpumem as requested (1024), not the multiplyBy
+							// product (2048); the multiplier only scales the quota output.
+							corev1.ResourceName("example.com/gpumem"):       1024,
+							corev1.ResourceName("example.com/gpumem-quota"): 2048,
+							corev1.ResourceName("example.com/gpu"):          2,
+						}),
+						Count: 1,
+					},
+				},
+			},
+		},
+		// A multiplier below one scales the generated output but leaves the
+		// retained input unchanged: 1024 is retained while the output is 512.
+		"transformRetainWithMultiplyByUnderOne": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(
+					*utiltestingapi.MakePodSet("a", 1).
+						Request("example.com/gpumem", "1024").
+						Request(corev1.ResourceCPU, "500m").
+						Obj(),
+				).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{
+				{
+					Input: "example.com/gpumem",
+					// Strategy left unset: nil defaults to Retain in production,
+					// so this covers the path an operator gets without asking.
+					MultiplyBy: corev1.ResourceCPU,
+					Outputs: corev1.ResourceList{
+						"example.com/gpumem-quota": resource.MustParse("1"),
+					},
+				},
+			})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{
+					{
+						Name: "a",
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+							corev1.ResourceName("example.com/gpumem"):       1024,
+							corev1.ResourceName("example.com/gpumem-quota"): 512,
+							corev1.ResourceCPU:                              500,
+						}),
+						Count: 1,
+					},
+				},
+			},
+		},
+		// MultiplyBy scales the value the outputs are computed from. Retain keeps
+		// the input as it was requested, so a request of 1 against a multiplier
+		// of 2 leaves 2 generated and 1 retained rather than 2 and 2.
+		"transformOutputSharingANameWithItsRetainedInputIsAddedToTheAmountRequested": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(*utiltestingapi.MakePodSet("a", 1).
+					Request("example.com/gpu", "1").
+					Request("example.com/node", "2").Obj()).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{{
+				Input:      "example.com/gpu",
+				Strategy:   new(config.Retain),
+				MultiplyBy: "example.com/node",
+				Outputs:    corev1.ResourceList{"example.com/gpu": resource.MustParse("1")},
+			}})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{{
+					Name: "a",
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+						corev1.ResourceName("example.com/gpu"):  3,
+						corev1.ResourceName("example.com/node"): 2,
+					}),
+					Count: 1,
+				}},
+			},
+		},
+		// A transformation product past the range must not arrive negative and
+		// be floored away.
+		"transformProductPastTheRangeIsNotFlooredAway": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(*utiltestingapi.MakePodSet("a", 1).
+					Request("example.com/credit", "10000000000").Obj()).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{{
+				Input:    "example.com/credit",
+				Strategy: new(config.Replace),
+				Outputs:  corev1.ResourceList{"example.com/gpu": resource.MustParse("10000000000")},
+			}})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{{
+					Name: "a",
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+						corev1.ResourceName("example.com/gpu"): math.MaxInt64,
+					}),
+					Count: 1,
+				}},
+			},
+		},
+		"transformMilliValues": {
+			workload: *utiltestingapi.MakeWorkload("transform", "").
+				PodSets(
+					*utiltestingapi.MakePodSet("", 1).
+						Request(corev1.ResourceCPU, "100m").
+						Request(corev1.ResourceMemory, "100M").
+						Obj(),
+				).
+				Obj(),
+			infoOptions: []InfoOption{WithResourceTransformations([]config.ResourceTransformation{
+				{
+					Input:    corev1.ResourceCPU,
+					Strategy: new(config.Replace),
+					Outputs: corev1.ResourceList{
+						"example.com/cpu-credits": resource.MustParse("3000"),
+					},
+				},
+				{
+					Input:    corev1.ResourceMemory,
+					Strategy: new(config.Replace),
+					Outputs: corev1.ResourceList{
+						"example.com/memory-credits": resource.MustParse("3m"),
+					},
+				},
+			})},
+			wantInfo: Info{
+				TotalRequests: []PodSetResources{
+					{
+						Name: "",
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
+							// 100m * 3000 = 300
+							corev1.ResourceName("example.com/cpu-credits"): 300,
+							// 100M * 3m = 300k
+							corev1.ResourceName("example.com/memory-credits"): 300 * 1000,
+						}),
+						Count: 1,
 					},
 				},
 			},
@@ -653,7 +1041,7 @@ func TestNewInfo(t *testing.T) {
 				features.SetFeatureGateDuringTest(t, fg, enabled)
 			}
 			info := NewInfo(&tc.workload, tc.infoOptions...)
-			if diff := cmp.Diff(info, &tc.wantInfo, cmpopts.IgnoreFields(Info{}, "Obj", "SchedulingHash")); diff != "" {
+			if diff := cmp.Diff(info, &tc.wantInfo, cmpopts.IgnoreFields(Info{}, "Obj", "SchedulingHash"), cmp.Comparer(resources.Equal)); diff != "" {
 				t.Errorf("NewInfo(_) = (-want,+got):\n%s", diff)
 			}
 		})
@@ -676,7 +1064,7 @@ func TestUpdateWithRebuild(t *testing.T) {
 				Request(corev1.ResourceCPU, "200m").Obj(),
 			wantRequests: []PodSetResources{{
 				Name:     kueue.DefaultPodSetName,
-				Requests: resources.Requests{corev1.ResourceCPU: 200},
+				Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 200}),
 				Count:    1,
 			}},
 		},
@@ -699,7 +1087,7 @@ func TestUpdateWithRebuild(t *testing.T) {
 				Request("example.com/gpu", "1").Obj(),
 			wantRequests: []PodSetResources{{
 				Name:     kueue.DefaultPodSetName,
-				Requests: resources.Requests{"example.com/gpu": 1},
+				Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{"example.com/gpu": 1}),
 				Count:    1,
 			}},
 		},
@@ -712,12 +1100,12 @@ func TestUpdateWithRebuild(t *testing.T) {
 					PodSets(kueue.PodSetAssignment{
 						Name:          kueue.DefaultPodSetName,
 						ResourceUsage: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("200m")},
-						Count:         ptr.To[int32](1),
+						Count:         new(int32(1)),
 					}).Obj(), now).
 				Obj(),
 			wantRequests: []PodSetResources{{
 				Name:     kueue.DefaultPodSetName,
-				Requests: resources.Requests{corev1.ResourceCPU: 200},
+				Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 200}),
 				Count:    1,
 			}},
 		},
@@ -739,22 +1127,26 @@ func TestUpdateWithRebuild(t *testing.T) {
 			updateOptions: []InfoOption{WithPreserveTotalRequests()},
 			wantRequests: []PodSetResources{{
 				Name:     kueue.DefaultPodSetName,
-				Requests: resources.Requests{"gpu": 1},
+				Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{"gpu": 1}),
 				Count:    1,
 			}},
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+			_, log := utiltesting.ContextWithLog(t)
 			info := NewInfo(tc.initial, tc.initialOptions...)
 			if len(tc.updateOptions) == 0 {
-				if diff := cmp.Diff(tc.wantRequests, info.TotalRequests, cmpopts.IgnoreFields(PodSetResources{}, "Flavors")); diff == "" {
+				if diff := cmp.Diff(tc.wantRequests, info.TotalRequests,
+					cmpopts.IgnoreFields(PodSetResources{}, "Flavors"),
+					cmp.Comparer(resources.Equal)); diff == "" {
 					t.Fatal("precondition failed: initial TotalRequests should differ from expected post-rebuild state")
 				}
 			}
-			info.Update(logr.Discard(), tc.updated, tc.updateOptions...)
+			info.Update(log, tc.updated, tc.updateOptions...)
 			if diff := cmp.Diff(tc.wantRequests, info.TotalRequests,
-				cmpopts.IgnoreFields(PodSetResources{}, "Flavors")); diff != "" {
+				cmpopts.IgnoreFields(PodSetResources{}, "Flavors"),
+				cmp.Comparer(resources.Equal)); diff != "" {
 				t.Errorf("TotalRequests after Update (-want,+got):\n%s", diff)
 			}
 		})
@@ -1066,6 +1458,41 @@ func TestReclaimablePodsAreEqual(t *testing.T) {
 	}
 }
 
+func TestLimitReclaimablePodsToPodSetSizes(t *testing.T) {
+	wl := utiltestingapi.MakeWorkload("wl", "ns").
+		PodSets(
+			*utiltestingapi.MakePodSet("ps1", 3).Obj(),
+			*utiltestingapi.MakePodSet("ps2", 5).Obj(),
+		).
+		Obj()
+	cases := map[string]struct {
+		reclaimablePods []kueue.ReclaimablePod
+		want            []kueue.ReclaimablePod
+	}{
+		"empty": {},
+		"within podSet sizes": {
+			reclaimablePods: []kueue.ReclaimablePod{{Name: "ps1", Count: 3}, {Name: "ps2", Count: 1}},
+			want:            []kueue.ReclaimablePod{{Name: "ps1", Count: 3}, {Name: "ps2", Count: 1}},
+		},
+		"count exceeding its podSet size is lowered": {
+			reclaimablePods: []kueue.ReclaimablePod{{Name: "ps1", Count: 4}, {Name: "ps2", Count: 6}},
+			want:            []kueue.ReclaimablePod{{Name: "ps1", Count: 3}, {Name: "ps2", Count: 5}},
+		},
+		"unknown podSet is left as is": {
+			reclaimablePods: []kueue.ReclaimablePod{{Name: "ps3", Count: 10}},
+			want:            []kueue.ReclaimablePod{{Name: "ps3", Count: 10}},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := LimitReclaimablePodsToPodSetSizes(wl, tc.reclaimablePods)
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("Unexpected reclaimable pods (-want,+got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestAssignmentClusterQueueState(t *testing.T) {
 	cases := map[string]struct {
 		state              *AssignmentClusterQueueState
@@ -1127,90 +1554,102 @@ func TestAssignmentClusterQueueState(t *testing.T) {
 	}
 }
 
-func TestFlavorResourceUsage(t *testing.T) {
+func TestResourceUsage(t *testing.T) {
 	cases := map[string]struct {
 		info *Info
-		want resources.FlavorResourceQuantities
+		want ResourceUsage
 	}{
 		"nil": {
-			want: resources.FlavorResourceQuantities{},
+			want: ResourceUsage{
+				Assigned:   resources.FlavorResourceQuantities{},
+				Unassigned: resources.MapRequests{},
+			},
 		},
 		"one podset, no flavors": {
 			info: &Info{
 				TotalRequests: []PodSetResources{{
-					Requests: resources.Requests{
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 						corev1.ResourceCPU: 1_000,
 						"example.com/gpu":  3,
-					},
+					}),
 				}},
 			},
-			want: resources.FlavorResourceQuantities{
-				{Flavor: "", Resource: "cpu"}:             resources.NewAmount(1_000),
-				{Flavor: "", Resource: "example.com/gpu"}: resources.NewAmount(3),
+			want: ResourceUsage{
+				Assigned: resources.FlavorResourceQuantities{},
+				Unassigned: resources.MapRequests{
+					"cpu":             1_000,
+					"example.com/gpu": 3,
+				},
 			},
 		},
 		"one podset, multiple flavors": {
 			info: &Info{
 				TotalRequests: []PodSetResources{{
-					Requests: resources.Requests{
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 						corev1.ResourceCPU: 1_000,
 						"example.com/gpu":  3,
-					},
+					}),
 					Flavors: map[corev1.ResourceName]kueue.ResourceFlavorReference{
 						corev1.ResourceCPU: "default",
 						"example.com/gpu":  "gpu",
 					},
 				}},
 			},
-			want: resources.FlavorResourceQuantities{
-				{Flavor: "default", Resource: "cpu"}:         resources.NewAmount(1_000),
-				{Flavor: "gpu", Resource: "example.com/gpu"}: resources.NewAmount(3),
+			want: ResourceUsage{
+				Assigned: resources.FlavorResourceQuantities{
+					{Flavor: "default", Resource: "cpu"}:         resources.NewAmount(1_000),
+					{Flavor: "gpu", Resource: "example.com/gpu"}: resources.NewAmount(3),
+				},
+				Unassigned: resources.MapRequests{},
 			},
 		},
 		"multiple podsets, multiple flavors": {
 			info: &Info{
 				TotalRequests: []PodSetResources{
 					{
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 1_000,
 							"example.com/gpu":  3,
-						},
+						}),
 						Flavors: map[corev1.ResourceName]kueue.ResourceFlavorReference{
 							corev1.ResourceCPU: "default",
 							"example.com/gpu":  "model_a",
 						},
 					},
 					{
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    2_000,
 							corev1.ResourceMemory: 2 * utiltesting.Gi,
-						},
+						}),
 						Flavors: map[corev1.ResourceName]kueue.ResourceFlavorReference{
 							corev1.ResourceCPU:    "default",
 							corev1.ResourceMemory: "default",
 						},
 					},
 					{
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							"example.com/gpu": 1,
-						},
+						}),
 						Flavors: map[corev1.ResourceName]kueue.ResourceFlavorReference{
 							"example.com/gpu": "model_b",
 						},
 					},
 				},
 			},
-			want: resources.FlavorResourceQuantities{
-				{Flavor: "default", Resource: "cpu"}:             resources.NewAmount(3_000),
-				{Flavor: "default", Resource: "memory"}:          resources.NewAmount(2 * utiltesting.Gi),
-				{Flavor: "model_a", Resource: "example.com/gpu"}: resources.NewAmount(3),
-				{Flavor: "model_b", Resource: "example.com/gpu"}: resources.NewAmount(1),
+			want: ResourceUsage{
+				Assigned: resources.FlavorResourceQuantities{
+					{Flavor: "default", Resource: "cpu"}:             resources.NewAmount(3_000),
+					{Flavor: "default", Resource: "memory"}:          resources.NewAmount(2 * utiltesting.Gi),
+					{Flavor: "model_a", Resource: "example.com/gpu"}: resources.NewAmount(3),
+					{Flavor: "model_b", Resource: "example.com/gpu"}: resources.NewAmount(1),
+				},
+				Unassigned: resources.MapRequests{},
 			},
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := tc.info.FlavorResourceUsage()
+			got := tc.info.ResourceUsage()
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("info.ResourceUsage() returned (-want,+got):\n%s", diff)
 			}
@@ -1412,11 +1851,11 @@ func TestPropagateResourceRequests(t *testing.T) {
 			info: &Info{
 				TotalRequests: []PodSetResources{{
 					Name: "ps1",
-					Requests: resources.Requests{
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 						corev1.ResourceCPU:    10000,
 						corev1.ResourceMemory: 10 * 1024 * 1024,
 						"nvidia.com/gpu":      1,
-					},
+					}),
 				}},
 			},
 			want: false,
@@ -1439,10 +1878,10 @@ func TestPropagateResourceRequests(t *testing.T) {
 			info: &Info{
 				TotalRequests: []PodSetResources{{
 					Name: "ps1",
-					Requests: resources.Requests{
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 						corev1.ResourceCPU: 5000,
 						"nvidia.com/gpu":   1,
-					},
+					}),
 				}},
 			},
 			want: true,
@@ -1465,11 +1904,11 @@ func TestPropagateResourceRequests(t *testing.T) {
 			info: &Info{
 				TotalRequests: []PodSetResources{{
 					Name: "ps1",
-					Requests: resources.Requests{
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 						corev1.ResourceCPU:    5000,
 						corev1.ResourceMemory: 10 * 1024 * 1024,
 						"nvidia.com/gpu":      1,
-					},
+					}),
 				}},
 			},
 			want: true,
@@ -1492,11 +1931,11 @@ func TestPropagateResourceRequests(t *testing.T) {
 			info: &Info{
 				TotalRequests: []PodSetResources{{
 					Name: "ps1",
-					Requests: resources.Requests{
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 						corev1.ResourceCPU:    10000,
 						corev1.ResourceMemory: 10 * 1024 * 1024,
 						"nvidia.com/gpu":      1,
-					},
+					}),
 				}},
 			},
 			want: true,
@@ -1519,11 +1958,11 @@ func TestPropagateResourceRequests(t *testing.T) {
 			info: &Info{
 				TotalRequests: []PodSetResources{{
 					Name: "ps1",
-					Requests: resources.Requests{
+					Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 						corev1.ResourceCPU:    10000,
 						corev1.ResourceMemory: 10 * 1024 * 1024,
 						"nvidia.com/gpu":      2,
-					},
+					}),
 				}},
 			},
 			want: true,
@@ -1555,19 +1994,19 @@ func TestPropagateResourceRequests(t *testing.T) {
 				TotalRequests: []PodSetResources{
 					{
 						Name: "ps1",
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    10000,
 							corev1.ResourceMemory: 10 * 1024 * 1024,
 							"nvidia.com/gpu":      1,
-						},
+						}),
 					},
 					{
 						Name: "ps2",
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU:    20000,
 							corev1.ResourceMemory: 20 * 1024 * 1024,
 							"nvidia.com/gpu":      2,
-						},
+						}),
 					},
 				},
 			},
@@ -1576,7 +2015,7 @@ func TestPropagateResourceRequests(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := PropagateResourceRequests(tc.wl, tc.info)
+			got := PropagateResourceRequests(tc.wl, tc.info, resources.NewResourceFormatter())
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("Unexpected PropagateResourceRequests() result (-want,+got):\n%s", diff)
 			}
@@ -1823,10 +2262,10 @@ func TestWithPreprocessedDRAResources(t *testing.T) {
 					{
 						Name:  "main",
 						Count: 1,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 100,
 							"gpus":             2,
-						},
+						}),
 					},
 				},
 			},
@@ -1855,18 +2294,18 @@ func TestWithPreprocessedDRAResources(t *testing.T) {
 					{
 						Name:  "main",
 						Count: 1,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 100,
 							"gpus":             2,
-						},
+						}),
 					},
 					{
 						Name:  "worker",
 						Count: 2,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceMemory: 2 * 1024 * 1024 * 1024,
 							"foo-accelerator":     2,
-						},
+						}),
 					},
 				},
 			},
@@ -1892,17 +2331,17 @@ func TestWithPreprocessedDRAResources(t *testing.T) {
 					{
 						Name:  "main",
 						Count: 1,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 100,
 							"gpus":             1,
-						},
+						}),
 					},
 					{
 						Name:  "worker",
 						Count: 1,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceMemory: 512 * 1024 * 1024,
-						},
+						}),
 					},
 				},
 			},
@@ -1913,7 +2352,7 @@ func TestWithPreprocessedDRAResources(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			info := NewInfo(&tc.workload, WithPreprocessedDRAResources(tc.draResources, nil))
 
-			if diff := cmp.Diff(tc.wantInfo.TotalRequests, info.TotalRequests); diff != "" {
+			if diff := cmp.Diff(tc.wantInfo.TotalRequests, info.TotalRequests, cmp.Comparer(resources.Equal)); diff != "" {
 				t.Errorf("Unexpected TotalRequests (-want,+got):\n%s", diff)
 			}
 		})
@@ -1949,10 +2388,10 @@ func TestWithPreprocessedDRAResourcesReplacesExtendedResources(t *testing.T) {
 					{
 						Name:  "main",
 						Count: 1,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 100,
 							"gpu":              1,
-						},
+						}),
 					},
 				},
 			},
@@ -1979,11 +2418,11 @@ func TestWithPreprocessedDRAResourcesReplacesExtendedResources(t *testing.T) {
 					{
 						Name:  "main",
 						Count: 2,
-						Requests: resources.Requests{
+						Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{
 							corev1.ResourceCPU: 200,
 							"gpu":              4,
 							"tpu":              2,
-						},
+						}),
 					},
 				},
 			},
@@ -1994,7 +2433,7 @@ func TestWithPreprocessedDRAResourcesReplacesExtendedResources(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			info := NewInfo(&tc.workload, WithPreprocessedDRAResources(tc.draResources, tc.replacedExtendedResources))
 
-			if diff := cmp.Diff(tc.wantInfo.TotalRequests, info.TotalRequests); diff != "" {
+			if diff := cmp.Diff(tc.wantInfo.TotalRequests, info.TotalRequests, cmp.Comparer(resources.Equal)); diff != "" {
 				t.Errorf("Unexpected TotalRequests (-want,+got):\n%s", diff)
 			}
 		})
@@ -2133,14 +2572,14 @@ func TestSetRequeueState(t *testing.T) {
 			incrementCount: true,
 			wantUpdated:    true,
 			wantRequeueAt:  new(metav1.NewTime(futureTime)),
-			wantCount:      ptr.To[int32](1),
+			wantCount:      new(int32(1)),
 		},
 		"should update time when existing requeue time is earlier": {
 			workload: &kueue.Workload{
 				Status: kueue.WorkloadStatus{
 					RequeueState: &kueue.RequeueState{
 						RequeueAt: new(metav1.NewTime(pastTime)),
-						Count:     ptr.To[int32](2),
+						Count:     new(int32(2)),
 					},
 				},
 			},
@@ -2148,14 +2587,14 @@ func TestSetRequeueState(t *testing.T) {
 			incrementCount: false,
 			wantUpdated:    true,
 			wantRequeueAt:  new(metav1.NewTime(futureTime)),
-			wantCount:      ptr.To[int32](2),
+			wantCount:      new(int32(2)),
 		},
 		"should not update time when existing requeue time is later": {
 			workload: &kueue.Workload{
 				Status: kueue.WorkloadStatus{
 					RequeueState: &kueue.RequeueState{
 						RequeueAt: new(metav1.NewTime(evenMoreFutureTime)),
-						Count:     ptr.To[int32](3),
+						Count:     new(int32(3)),
 					},
 				},
 			},
@@ -2163,14 +2602,14 @@ func TestSetRequeueState(t *testing.T) {
 			incrementCount: false,
 			wantUpdated:    false,
 			wantRequeueAt:  new(metav1.NewTime(evenMoreFutureTime)),
-			wantCount:      ptr.To[int32](3),
+			wantCount:      new(int32(3)),
 		},
 		"should increment count but keep later requeue time": {
 			workload: &kueue.Workload{
 				Status: kueue.WorkloadStatus{
 					RequeueState: &kueue.RequeueState{
 						RequeueAt: new(metav1.NewTime(evenMoreFutureTime)),
-						Count:     ptr.To[int32](3),
+						Count:     new(int32(3)),
 					},
 				},
 			},
@@ -2178,14 +2617,14 @@ func TestSetRequeueState(t *testing.T) {
 			incrementCount: true,
 			wantUpdated:    true,
 			wantRequeueAt:  new(metav1.NewTime(evenMoreFutureTime)),
-			wantCount:      ptr.To[int32](4),
+			wantCount:      new(int32(4)),
 		},
 		"should increment count when requeue time is same": {
 			workload: &kueue.Workload{
 				Status: kueue.WorkloadStatus{
 					RequeueState: &kueue.RequeueState{
 						RequeueAt: new(metav1.NewTime(futureTime)),
-						Count:     ptr.To[int32](1),
+						Count:     new(int32(1)),
 					},
 				},
 			},
@@ -2193,14 +2632,14 @@ func TestSetRequeueState(t *testing.T) {
 			incrementCount: true,
 			wantUpdated:    true,
 			wantRequeueAt:  new(metav1.NewTime(futureTime)),
-			wantCount:      ptr.To[int32](2),
+			wantCount:      new(int32(2)),
 		},
 		"should increment from zero count": {
 			workload: &kueue.Workload{
 				Status: kueue.WorkloadStatus{
 					RequeueState: &kueue.RequeueState{
 						RequeueAt: new(metav1.NewTime(pastTime)),
-						Count:     ptr.To[int32](0),
+						Count:     new(int32(0)),
 					},
 				},
 			},
@@ -2208,14 +2647,14 @@ func TestSetRequeueState(t *testing.T) {
 			incrementCount: true,
 			wantUpdated:    true,
 			wantRequeueAt:  new(metav1.NewTime(futureTime)),
-			wantCount:      ptr.To[int32](1),
+			wantCount:      new(int32(1)),
 		},
 		"should handle zero time in requeue state": {
 			workload: &kueue.Workload{
 				Status: kueue.WorkloadStatus{
 					RequeueState: &kueue.RequeueState{
 						RequeueAt: new(metav1.NewTime(time.Time{})),
-						Count:     ptr.To[int32](0),
+						Count:     new(int32(0)),
 					},
 				},
 			},
@@ -2223,7 +2662,7 @@ func TestSetRequeueState(t *testing.T) {
 			incrementCount: true,
 			wantUpdated:    true,
 			wantRequeueAt:  new(metav1.NewTime(futureTime)),
-			wantCount:      ptr.To[int32](1),
+			wantCount:      new(int32(1)),
 		},
 	}
 
@@ -2681,14 +3120,78 @@ func TestSchedulingHash(t *testing.T) {
 				features.ConcurrentAdmission:          true,
 			},
 		},
+		"different PodSet names when the name is part of the hash": {
+			wl1: utiltestingapi.MakeWorkload("wl1", "ns").
+				PodSets(*utiltestingapi.MakePodSet("4f7aac39", 1).
+					Request(corev1.ResourceCPU, "1").Obj()).Obj(),
+			wl2: utiltestingapi.MakeWorkload("wl2", "ns").
+				PodSets(*utiltestingapi.MakePodSet("f8172213", 1).
+					Request(corev1.ResourceCPU, "1").Obj()).Obj(),
+			wantSame: false,
+			featureGates: map[featuregate.Feature]bool{
+				features.SchedulingEquivalenceHashing:                 true,
+				features.SchedulingEquivalenceHashingIgnorePodSetName: false,
+			},
+		},
+		"different PodSet names when the name is ignored": {
+			wl1: utiltestingapi.MakeWorkload("wl1", "ns").
+				PodSets(*utiltestingapi.MakePodSet("4f7aac39", 1).
+					Request(corev1.ResourceCPU, "1").Obj()).Obj(),
+			wl2: utiltestingapi.MakeWorkload("wl2", "ns").
+				PodSets(*utiltestingapi.MakePodSet("f8172213", 1).
+					Request(corev1.ResourceCPU, "1").Obj()).Obj(),
+			wantSame: true,
+			featureGates: map[featuregate.Feature]bool{
+				features.SchedulingEquivalenceHashing:                 true,
+				features.SchedulingEquivalenceHashingIgnorePodSetName: true,
+			},
+		},
+		// Position still matters: requests are matched to PodSets by index.
+		"PodSet requests swapped between the same names when the name is ignored": {
+			wl1: utiltestingapi.MakeWorkload("wl1", "ns").
+				PodSets(
+					*utiltestingapi.MakePodSet("a", 1).Request(corev1.ResourceCPU, "1").Obj(),
+					*utiltestingapi.MakePodSet("b", 1).Request(corev1.ResourceCPU, "2").Obj(),
+				).Obj(),
+			wl2: utiltestingapi.MakeWorkload("wl2", "ns").
+				PodSets(
+					*utiltestingapi.MakePodSet("a", 1).Request(corev1.ResourceCPU, "2").Obj(),
+					*utiltestingapi.MakePodSet("b", 1).Request(corev1.ResourceCPU, "1").Obj(),
+				).Obj(),
+			wantSame: false,
+			featureGates: map[featuregate.Feature]bool{
+				features.SchedulingEquivalenceHashing:                 true,
+				features.SchedulingEquivalenceHashingIgnorePodSetName: true,
+			},
+		},
+		// The Pod group case: same two roles, distinct per-Workload names that sort
+		// into opposite positions, so the ordered descriptions differ.
+		"PodSets with distinct names sorting into a different order when the name is ignored": {
+			wl1: utiltestingapi.MakeWorkload("wl1", "ns").
+				PodSets(
+					*utiltestingapi.MakePodSet("4f7aac39", 1).Request(corev1.ResourceCPU, "1").Obj(),
+					*utiltestingapi.MakePodSet("f8172213", 1).Request(corev1.ResourceCPU, "2").Obj(),
+				).Obj(),
+			wl2: utiltestingapi.MakeWorkload("wl2", "ns").
+				PodSets(
+					*utiltestingapi.MakePodSet("12b10b3c", 1).Request(corev1.ResourceCPU, "2").Obj(),
+					*utiltestingapi.MakePodSet("a4586327", 1).Request(corev1.ResourceCPU, "1").Obj(),
+				).Obj(),
+			wantSame: false,
+			featureGates: map[featuregate.Feature]bool{
+				features.SchedulingEquivalenceHashing:                 true,
+				features.SchedulingEquivalenceHashingIgnorePodSetName: true,
+			},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+			_, log := utiltesting.ContextWithLog(t)
 			features.SetFeatureGatesDuringTest(t, tc.featureGates)
 			info1 := NewInfo(tc.wl1)
-			info1.UpdateSchedulingHash(logr.Discard())
+			info1.updateSchedulingHash(log)
 			info2 := NewInfo(tc.wl2)
-			info2.UpdateSchedulingHash(logr.Discard())
+			info2.updateSchedulingHash(log)
 			if info1.SchedulingHash == "" {
 				t.Error("SchedulingHash should not be empty")
 			}
@@ -2702,13 +3205,14 @@ func TestSchedulingHash(t *testing.T) {
 	}
 
 	t.Run("DRA translation producing different TotalRequests produces different hash", func(t *testing.T) {
+		_, log := utiltesting.ContextWithLog(t)
 		features.SetFeatureGatesDuringTest(t, map[featuregate.Feature]bool{
 			features.SchedulingEquivalenceHashing: true,
 		})
 		wl := utiltestingapi.MakeWorkload("wl", "ns").
 			Request("example.com/gpu", "1").Obj()
 		before := NewInfo(wl)
-		before.UpdateSchedulingHash(logr.Discard())
+		before.updateSchedulingHash(log)
 
 		after := NewInfo(wl, WithPreprocessedDRAResources(
 			map[kueue.PodSetReference]corev1.ResourceList{
@@ -2720,15 +3224,159 @@ func TestSchedulingHash(t *testing.T) {
 				kueue.DefaultPodSetName: sets.New[corev1.ResourceName]("example.com/gpu"),
 			},
 		))
-		after.UpdateSchedulingHash(logr.Discard())
+		after.updateSchedulingHash(log)
 
-		if diff := cmp.Diff(before.TotalRequests, after.TotalRequests); diff == "" {
+		if diff := cmp.Diff(before.TotalRequests, after.TotalRequests, cmp.Comparer(resources.Equal)); diff == "" {
 			t.Fatal("precondition failed: TotalRequests should differ after DRA translation")
 		}
 		if before.SchedulingHash == after.SchedulingHash {
 			t.Errorf("expected different hashes after DRA translation, got same %q", before.SchedulingHash)
 		}
 	})
+}
+
+func TestUpdateSchedulingHashReuse(t *testing.T) {
+	features.SetFeatureGatesDuringTest(t, map[featuregate.Feature]bool{
+		features.SchedulingEquivalenceHashing: true,
+	})
+
+	// This helper hands back a different shape at an unchanged ResourceVersion,
+	// which production never does, so that reuse is observable. Only priority
+	// varies: the hash reads it, the effective requests do not.
+	workload := func(uid types.UID, rv string, priority int32) *kueue.Workload {
+		return utiltestingapi.MakeWorkload("wl", "ns").UID(uid).ResourceVersion(rv).
+			Priority(priority).Request(corev1.ResourceCPU, "1").Obj()
+	}
+	draWorkload := utiltestingapi.MakeWorkload("wl", "ns").UID("uid").ResourceVersion("1").
+		Request("example.com/gpu", "1").Obj()
+	draOptions := []InfoOption{WithPreprocessedDRAResources(
+		map[kueue.PodSetReference]corev1.ResourceList{
+			kueue.DefaultPodSetName: {"gpu": resource.MustParse("1")},
+		},
+		map[kueue.PodSetReference]sets.Set[corev1.ResourceName]{
+			kueue.DefaultPodSetName: sets.New[corev1.ResourceName]("example.com/gpu"),
+		},
+	)}
+
+	withoutHash := func(info *Info) *Info {
+		info.SchedulingHash = ""
+		return info
+	}
+
+	cases := map[string]struct {
+		info      *Info
+		reread    *kueue.Workload
+		opts      []InfoOption
+		wantReuse bool
+	}{
+		"same UID and ResourceVersion keeps the hash": {
+			info:      NewInfo(workload("uid", "1", 1)),
+			reread:    workload("uid", "1", 2),
+			wantReuse: true,
+		},
+		"changed ResourceVersion recomputes the hash": {
+			info:   NewInfo(workload("uid", "1", 1)),
+			reread: workload("uid", "2", 2),
+		},
+		"changed UID recomputes the hash": {
+			info:   NewInfo(workload("uid", "1", 1)),
+			reread: workload("other", "1", 2),
+		},
+		// Objects that never round-tripped through the API server share the
+		// empty ResourceVersion, which says nothing about their shape.
+		"absent ResourceVersion on both sides recomputes the hash": {
+			info:   NewInfo(workload("uid", "", 1)),
+			reread: workload("uid", "", 2),
+		},
+		"an Info holding no hash computes one": {
+			// Requests match, so only the missing hash can force the recompute.
+			info:   withoutHash(NewInfo(workload("uid", "1", 1))),
+			reread: workload("uid", "1", 2),
+		},
+		"an Info holding no object computes one": {
+			info:   &Info{SchedulingHash: "stale"},
+			reread: workload("uid", "1", 2),
+		},
+		// The requeue path carries DRA-preprocessed requests over deliberately,
+		// which leaves the version check to decide alone.
+		"preserved TotalRequests leave the decision to the version check": {
+			info: NewInfo(workload("uid", "1", 1)),
+			reread: utiltestingapi.MakeWorkload("wl", "ns").UID("uid").ResourceVersion("1").
+				Priority(2).Request(corev1.ResourceCPU, "2").Obj(),
+			opts:      []InfoOption{WithPreserveTotalRequests()},
+			wantReuse: true,
+		},
+		// The requeue path drops the DRA options when NeedsDRAReconcile turns
+		// false, which it can do at an unchanged ResourceVersion.
+		"dropped DRA preprocessing recomputes the hash": {
+			info:   NewInfo(draWorkload, draOptions...),
+			reread: draWorkload,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, log := utiltesting.ContextWithLog(t)
+			before := tc.info.SchedulingHash
+			if before == SchedulingHashUnknown {
+				t.Fatalf("precondition failed: hash is %q", before)
+			}
+
+			tc.info.Update(log, tc.reread, tc.opts...)
+
+			if got := tc.info.SchedulingHash == before; got != tc.wantReuse {
+				t.Errorf("hash reused = %v, want %v (hash %q -> %q)", got, tc.wantReuse, before, tc.info.SchedulingHash)
+			}
+			// A recomputed hash must describe the inputs the Info now holds.
+			if !tc.wantReuse {
+				want := computeSchedulingHash(log, tc.info.Obj, tc.info.TotalRequests)
+				if tc.info.SchedulingHash != want {
+					t.Errorf("SchedulingHash = %q, does not describe the Info's own inputs (%q)", tc.info.SchedulingHash, want)
+				}
+			}
+		})
+	}
+
+	t.Run("the hash stays unknown while the feature gate is off", func(t *testing.T) {
+		_, log := utiltesting.ContextWithLog(t)
+		features.SetFeatureGatesDuringTest(t, map[featuregate.Feature]bool{
+			features.SchedulingEquivalenceHashing: false,
+		})
+		info := NewInfo(workload("uid", "1", 1))
+		info.Update(log, workload("uid", "1", 2))
+		if info.SchedulingHash != SchedulingHashUnknown {
+			t.Errorf("SchedulingHash = %q, want %q", info.SchedulingHash, SchedulingHashUnknown)
+		}
+	})
+}
+
+func TestSameHashedRequests(t *testing.T) {
+	podSet := func(count int32, cpu int64) PodSetResources {
+		return PodSetResources{
+			Name:     kueue.DefaultPodSetName,
+			Count:    count,
+			Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: cpu}),
+		}
+	}
+
+	cases := map[string]struct {
+		prev, current []PodSetResources
+		want          bool
+	}{
+		"identical":            {prev: []PodSetResources{podSet(1, 1000)}, current: []PodSetResources{podSet(1, 1000)}, want: true},
+		"both empty":           {want: true},
+		"different count":      {prev: []PodSetResources{podSet(1, 1000)}, current: []PodSetResources{podSet(2, 1000)}},
+		"different requests":   {prev: []PodSetResources{podSet(1, 1000)}, current: []PodSetResources{podSet(1, 2000)}},
+		"a PodSet was added":   {prev: []PodSetResources{podSet(1, 1000)}, current: []PodSetResources{podSet(1, 1000), podSet(1, 1000)}},
+		"a PodSet was dropped": {prev: []PodSetResources{podSet(1, 1000), podSet(1, 1000)}, current: []PodSetResources{podSet(1, 1000)}},
+		"requests appeared":    {prev: []PodSetResources{{Name: kueue.DefaultPodSetName, Count: 1}}, current: []PodSetResources{podSet(1, 1000)}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := sameHashedRequests(tc.prev, tc.current); got != tc.want {
+				t.Errorf("sameHashedRequests() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestUsedNodes(t *testing.T) {
@@ -2763,7 +3411,7 @@ func TestUsedNodes(t *testing.T) {
 												}},
 											},
 											PodCounts: kueue.TopologyAssignmentSlicePodCounts{
-												Universal: ptr.To[int32](1),
+												Universal: new(int32(1)),
 											},
 										},
 									},
@@ -2794,7 +3442,7 @@ func TestUsedNodes(t *testing.T) {
 												}},
 											},
 											PodCounts: kueue.TopologyAssignmentSlicePodCounts{
-												Universal: ptr.To[int32](1),
+												Universal: new(int32(1)),
 											},
 										},
 									},
@@ -2836,7 +3484,7 @@ func TestUsedNodes(t *testing.T) {
 												}},
 											},
 											PodCounts: kueue.TopologyAssignmentSlicePodCounts{
-												Universal: ptr.To[int32](1),
+												Universal: new(int32(1)),
 											},
 										},
 									},
@@ -2867,7 +3515,7 @@ func TestUsedNodes(t *testing.T) {
 												}},
 											},
 											PodCounts: kueue.TopologyAssignmentSlicePodCounts{
-												Universal: ptr.To[int32](1),
+												Universal: new(int32(1)),
 											},
 										},
 									},
@@ -2886,7 +3534,7 @@ func TestUsedNodes(t *testing.T) {
 												}},
 											},
 											PodCounts: kueue.TopologyAssignmentSlicePodCounts{
-												Universal: ptr.To[int32](1),
+												Universal: new(int32(1)),
 											},
 										},
 									},
@@ -2917,7 +3565,7 @@ func TestUsedNodes(t *testing.T) {
 												}},
 											},
 											PodCounts: kueue.TopologyAssignmentSlicePodCounts{
-												Universal: ptr.To[int32](1),
+												Universal: new(int32(1)),
 											},
 										},
 									},
@@ -2949,7 +3597,7 @@ func TestUsedNodes(t *testing.T) {
 												{Universal: new("rack-1")},
 											},
 											PodCounts: kueue.TopologyAssignmentSlicePodCounts{
-												Universal: ptr.To[int32](1),
+												Universal: new(int32(1)),
 											},
 										},
 									},
@@ -3036,7 +3684,7 @@ func TestSumTotalRequestsWithDRAFromAdmission(t *testing.T) {
 		).Obj()
 
 	info := NewInfo(wl)
-	sumReqs := info.SumTotalRequests()
+	sumReqs := info.SumTotalRequests(resources.NewResourceFormatter())
 
 	// Verify CPU is present
 	cpuVal, hasCPU := sumReqs[corev1.ResourceCPU]
@@ -3150,6 +3798,131 @@ func TestShouldSkipClusterNomination(t *testing.T) {
 			got := ShouldSkipClusterNomination(tc.acs, tc.wl, tc.isElastic)
 			if got != tc.want {
 				t.Errorf("ShouldSkipClusterNomination() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCalcLocalQueueFSUsage(t *testing.T) {
+	ctx, _ := utiltesting.ContextWithLog(t)
+	errOther := errors.New("other error")
+	cases := map[string]struct {
+		err       error
+		wantUsage float64
+		wantErr   error
+	}{
+		"not found error": {
+			err:       apierrors.NewNotFound(schema.GroupResource{Resource: "localqueues"}, "lq"),
+			wantUsage: 50.0, // (10 cpu * 5 weight) / 1.0 default weight = 50.0
+			wantErr:   nil,
+		},
+		"other error": {
+			err:       errOther,
+			wantUsage: 0,
+			wantErr:   errOther,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			wl := utiltestingapi.MakeWorkload("wl", "ns").Queue("lq").Obj()
+			cl := utiltesting.NewClientBuilder().
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						return tc.err
+					},
+				}).
+				Build()
+
+			info := NewInfo(wl)
+
+			resWeights := map[corev1.ResourceName]float64{corev1.ResourceCPU: 5.0}
+
+			afsLedger := queueafs.NewAfsUsageLedger()
+			afsLedger.SetForTest(utilqueue.KeyFromWorkload(wl), corev1.ResourceList{
+				corev1.ResourceCPU: resource.MustParse("10"),
+			}, time.Now())
+
+			usage, err := info.CalcLocalQueueFSUsage(ctx, cl, resWeights, afsLedger)
+
+			if diff := cmp.Diff(tc.wantErr, err, cmpopts.EquateErrors()); diff != "" {
+				t.Errorf("Unexpected error (-want,+got):\n%s", diff)
+			}
+
+			if usage != tc.wantUsage {
+				t.Errorf("CalcLocalQueueFSUsage() = %v, want %v", usage, tc.wantUsage)
+			}
+		})
+	}
+}
+
+func TestTotalExecutionTime(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	admission := utiltestingapi.MakeAdmission("cq").Obj()
+
+	cases := map[string]struct {
+		wl   *kueue.Workload
+		want *time.Duration
+	}{
+		"admitted and finished": {
+			wl: utiltestingapi.MakeWorkload("wl", "ns").
+				ReserveQuotaAt(admission, now).
+				AdmittedAt(true, now).
+				FinishedAt(now.Add(10 * time.Second)).
+				Obj(),
+			want: new(10 * time.Second),
+		},
+		"not admitted": {
+			wl: utiltestingapi.MakeWorkload("wl", "ns").Obj(),
+		},
+		"admitted but not finished": {
+			wl: utiltestingapi.MakeWorkload("wl", "ns").
+				ReserveQuotaAt(admission, now).
+				AdmittedAt(true, now).
+				Obj(),
+		},
+		"admitted false": {
+			wl: utiltestingapi.MakeWorkload("wl", "ns").
+				ReserveQuotaAt(admission, now).
+				AdmittedAt(false, now).
+				FinishedAt(now.Add(10 * time.Second)).
+				Obj(),
+		},
+		"finished condition false": {
+			wl: utiltestingapi.MakeWorkload("wl", "ns").
+				ReserveQuotaAt(admission, now).
+				AdmittedAt(true, now).
+				Condition(metav1.Condition{
+					Type:               kueue.WorkloadFinished,
+					Status:             metav1.ConditionFalse,
+					LastTransitionTime: metav1.NewTime(now.Add(10 * time.Second)),
+					Reason:             "ByTest",
+				}).
+				Obj(),
+		},
+		"with accumulated past execution time": {
+			wl: utiltestingapi.MakeWorkload("wl", "ns").
+				ReserveQuotaAt(admission, now).
+				AdmittedAt(true, now).
+				FinishedAt(now.Add(5 * time.Second)).
+				PastAdmittedTime(30).
+				Obj(),
+			want: new(35 * time.Second),
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := TotalExecutionTime(tc.wl)
+			if tc.want == nil {
+				if got != nil {
+					t.Errorf("TotalExecutionTime() = %v, want nil", *got)
+				}
+			} else {
+				if got == nil {
+					t.Fatalf("TotalExecutionTime() = nil, want %v", *tc.want)
+				}
+				if *got != *tc.want {
+					t.Errorf("TotalExecutionTime() = %v, want %v", *got, *tc.want)
+				}
 			}
 		})
 	}

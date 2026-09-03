@@ -527,7 +527,33 @@ func Test_GetResourceRequests(t *testing.T) {
 			},
 		},
 		{
-			name: "AdminAccess returns error",
+			name: "Exactly and FirstAvailable are nil returns error",
+			extraObjects: []runtime.Object{
+				&resourcev1.ResourceClaimTemplate{
+					ObjectMeta: metav1.ObjectMeta{Name: "claim-tmpl-empty", Namespace: "ns1"},
+					Spec: resourcev1.ResourceClaimTemplateSpec{
+						Spec: resourcev1.ResourceClaimSpec{
+							Devices: resourcev1.DeviceClaim{
+								Requests: []resourcev1.DeviceRequest{
+									{Name: "req"},
+								},
+							},
+						},
+					},
+				},
+			},
+			modifyWL: func(w *kueue.Workload) {
+				w.Spec.PodSets[0].Template.Spec.ResourceClaims = []corev1.PodResourceClaim{
+					{Name: "req-empty", ResourceClaimTemplateName: new("claim-tmpl-empty")},
+				}
+			},
+			lookup: defaultLookup,
+			wantErr: field.ErrorList{
+				field.Invalid(field.NewPath("spec", "podSets").Index(0).Child("template", "spec", "resourceClaims").Index(0).Child("devices", "requests").Index(0), "", ""),
+			},
+		},
+		{
+			name: "AdminAccess request is skipped with zero quota",
 			extraObjects: []runtime.Object{
 				utiltesting.MakeResourceClaimTemplate("claim-tmpl-admin", "ns1").
 					DeviceRequest("req", "test-deviceclass-1", 1).
@@ -540,12 +566,47 @@ func Test_GetResourceRequests(t *testing.T) {
 				}
 			},
 			lookup: defaultLookup,
-			wantErr: field.ErrorList{
-				field.Invalid(
-					field.NewPath("spec", "podSets").Index(0).Child("template", "spec", "resourceClaims").Index(0).Child("devices", "requests").Index(0).Child("exactly", "adminAccess"),
-					"",
-					"",
-				),
+		},
+		{
+			name: "Mixed AdminAccess and normal requests counts only normal",
+			extraObjects: []runtime.Object{
+				&resourcev1.ResourceClaimTemplate{
+					ObjectMeta: metav1.ObjectMeta{Name: "claim-tmpl-mixed", Namespace: "ns1"},
+					Spec: resourcev1.ResourceClaimTemplateSpec{
+						Spec: resourcev1.ResourceClaimSpec{
+							Devices: resourcev1.DeviceClaim{
+								Requests: []resourcev1.DeviceRequest{
+									{
+										Name: "normal-req",
+										Exactly: &resourcev1.ExactDeviceRequest{
+											DeviceClassName: "test-deviceclass-1",
+											AllocationMode:  resourcev1.DeviceAllocationModeExactCount,
+											Count:           2,
+										},
+									},
+									{
+										Name: "admin-req",
+										Exactly: &resourcev1.ExactDeviceRequest{
+											DeviceClassName: "test-deviceclass-1",
+											AllocationMode:  resourcev1.DeviceAllocationModeExactCount,
+											Count:           1,
+											AdminAccess:     new(true),
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			modifyWL: func(w *kueue.Workload) {
+				w.Spec.PodSets[0].Template.Spec.ResourceClaims = []corev1.PodResourceClaim{
+					{Name: "req-mixed", ResourceClaimTemplateName: new("claim-tmpl-mixed")},
+				}
+			},
+			lookup: defaultLookup,
+			want: map[kueue.PodSetReference]corev1.ResourceList{
+				"main": {"res-1": resource.MustParse("2")},
 			},
 		},
 		{
@@ -676,7 +737,11 @@ func Test_GetResourceRequests(t *testing.T) {
 					objs = append(objs, o.(client.Object))
 				}
 			}
-			baseClient := utiltesting.NewClientBuilder().WithObjects(objs...).Build()
+			baseClient := utiltesting.NewClientBuilder().
+				WithIndex(&resourcev1.ResourceSlice{}, "spec.driver", func(obj client.Object) []string {
+					return []string{obj.(*resourcev1.ResourceSlice).Spec.Driver}
+				}).
+				WithObjects(objs...).Build()
 
 			wlCopy := wl.DeepCopy()
 			if tc.modifyWL != nil {
@@ -687,7 +752,8 @@ func Test_GetResourceRequests(t *testing.T) {
 			if testMapper == nil {
 				testMapper = NewResourceMapper()
 			}
-			got, err := GetResourceRequestsForResourceClaimTemplates(ctx, baseClient, testMapper, wlCopy)
+			sliceCache := NewResourceSliceCache(baseClient)
+			got, err := GetResourceRequestsForResourceClaimTemplates(ctx, baseClient, sliceCache, testMapper, wlCopy)
 
 			if diff := cmp.Diff(tc.wantErr, err, cmpopts.IgnoreFields(field.Error{}, "Detail", "BadValue")); diff != "" {
 				t.Errorf("GetResourceRequestsForResourceClaimTemplates() error mismatch (-want +got):\n%s", diff)
@@ -734,7 +800,7 @@ func Test_countDevicesPerClass_overflow(t *testing.T) {
 			if len(errs) != 0 {
 				t.Fatalf("unexpected errors: %v", errs)
 			}
-			if got := out["gpu"]; got != tc.wantCount {
+			if got := out.ResourceValue("gpu"); got != tc.wantCount {
 				t.Errorf("count = %d, want %d", got, tc.wantCount)
 			}
 		})

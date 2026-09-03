@@ -24,8 +24,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
+	"sigs.k8s.io/kueue/pkg/features"
 	"sigs.k8s.io/kueue/pkg/util/roletracker"
 	"sigs.k8s.io/kueue/pkg/util/testing/metrics"
 	"sigs.k8s.io/kueue/pkg/version"
@@ -40,6 +42,27 @@ func expectFilteredMetricsCount(t *testing.T, vec prometheus.Collector, count in
 	if len(all) != count {
 		t.Helper()
 		t.Errorf("Expecting %d metrics got %d, matching labels %v", count, len(all), kvs)
+	}
+}
+
+func expectHistogramSampleSum(t *testing.T, vec *prometheus.HistogramVec, expected float64, labels ...string) {
+	t.Helper()
+	observer, err := vec.GetMetricWithLabelValues(labels...)
+	if err != nil {
+		t.Fatalf("Error getting metric for labels %v: %v", labels, err)
+	}
+	var dto dto.Metric
+
+	if err := observer.(prometheus.Metric).Write(&dto); err != nil {
+		t.Fatalf("Error writing metric: %v", err)
+	}
+
+	if dto.Histogram == nil {
+		t.Fatalf("Expected histogram metric for labels %v", labels)
+	}
+
+	if got := dto.GetHistogram().GetSampleSum(); got != expected {
+		t.Errorf("got %v want %v", got, expected)
 	}
 }
 
@@ -69,6 +92,37 @@ func TestReportAndCleanupClusterQueuePendingResources(t *testing.T) {
 	expectFilteredMetricsCount(t, ClusterQueueResourcePending, 1, "cluster_queue", cqName)
 	ClearClusterQueueMetrics(cqName)
 	expectFilteredMetricsCount(t, ClusterQueueResourcePending, 0, "cluster_queue", cqName)
+}
+
+func TestReportAndCleanupPendingSchedulingHashes(t *testing.T) {
+	const cqName = "cq-pending-hashes"
+
+	features.SetFeatureGateDuringTest(t, features.SchedulingEquivalenceHashing, true)
+
+	ReportPendingSchedulingHashes(cqName, 3, 1, nil, nil)
+
+	expectFilteredMetricsCount(t, PendingSchedulingHashes, 2, "cluster_queue", cqName)
+	gotActive := testutil.ToFloat64(PendingSchedulingHashes.WithLabelValues(cqName, PendingStatusActive, roletracker.RoleStandalone))
+	if gotActive != 3 {
+		t.Fatalf("PendingSchedulingHashes active = %v, want 3", gotActive)
+	}
+	gotInadmissible := testutil.ToFloat64(PendingSchedulingHashes.WithLabelValues(cqName, PendingStatusInadmissible, roletracker.RoleStandalone))
+	if gotInadmissible != 1 {
+		t.Fatalf("PendingSchedulingHashes inadmissible = %v, want 1", gotInadmissible)
+	}
+
+	ClearClusterQueueMetrics(cqName)
+	expectFilteredMetricsCount(t, PendingSchedulingHashes, 0, "cluster_queue", cqName)
+}
+
+func TestReportPendingSchedulingHashesFeatureGateDisabled(t *testing.T) {
+	const cqName = "cq-pending-hashes-gated"
+
+	features.SetFeatureGateDuringTest(t, features.SchedulingEquivalenceHashing, false)
+
+	ReportPendingSchedulingHashes(cqName, 3, 1, nil, nil)
+
+	expectFilteredMetricsCount(t, PendingSchedulingHashes, 0, "cluster_queue", cqName)
 }
 
 func TestReportAndCleanupClusterQueueMetrics(t *testing.T) {
@@ -243,6 +297,27 @@ func TestReportMultiKueueWorkloadDispatched(t *testing.T) {
 	}
 }
 
+func TestReportMultiKueueWorkloadAdmitted(t *testing.T) {
+	leaderTracker := roletracker.NewFakeRoleTracker(roletracker.RoleLeader)
+
+	ReportMultiKueueWorkloadAdmitted("admit-cq1", "admit-worker1", leaderTracker)
+	ReportMultiKueueWorkloadAdmitted("admit-cq1", "admit-worker1", leaderTracker)
+	ReportMultiKueueWorkloadAdmitted("admit-cq1", "admit-worker2", leaderTracker)
+
+	if got := testutil.ToFloat64(MultiKueueWorkloadsAdmittedTotal.WithLabelValues("admit-cq1", "admit-worker1", roletracker.RoleLeader)); got != 2 {
+		t.Errorf("expected 2 admitted workloads for admit-worker1, got %v", got)
+	}
+	if got := testutil.ToFloat64(MultiKueueWorkloadsAdmittedTotal.WithLabelValues("admit-cq1", "admit-worker2", roletracker.RoleLeader)); got != 1 {
+		t.Errorf("expected 1 admitted workload for admit-worker2, got %v", got)
+	}
+
+	// A nil tracker must be reported as standalone and not panic.
+	ReportMultiKueueWorkloadAdmitted("admit-cq2", "admit-worker3", nil)
+	if got := testutil.ToFloat64(MultiKueueWorkloadsAdmittedTotal.WithLabelValues("admit-cq2", "admit-worker3", roletracker.RoleStandalone)); got != 1 {
+		t.Errorf("expected 1 admitted workload for admit-worker3 with standalone role, got %v", got)
+	}
+}
+
 func TestReportAndCleanupWorkloadEvictionLatency(t *testing.T) {
 	ReportWorkloadEvictionLatency("cq-preempt-unique", kueue.WorkloadEvictedByPreemption, time.Second, nil, nil)
 	n := testutil.CollectAndCount(WorkloadEvictionLatencySeconds)
@@ -282,6 +357,20 @@ func TestReportAndCleanupClusterQueuePreemptedNumber(t *testing.T) {
 
 	ClearClusterQueueMetrics("cluster_queue1")
 	expectFilteredMetricsCount(t, PreemptedWorkloadsTotal, 0, "preempting_cluster_queue", "cluster_queue1")
+}
+
+func TestReportAndCleanupPreemptionTargetRecomputations(t *testing.T) {
+	ReportPreemptionTargetRecomputation("cluster_queue1", PreemptionTargetRecomputationResultNewTargets, nil, nil)
+	ReportPreemptionTargetRecomputation("cluster_queue1", PreemptionTargetRecomputationResultDeferredFit, nil, nil)
+	ReportPreemptionTargetRecomputation("cluster_queue1", PreemptionTargetRecomputationResultSkipped, nil, nil)
+
+	expectFilteredMetricsCount(t, PreemptionTargetRecomputationsTotal, 3, "cluster_queue", "cluster_queue1")
+	expectFilteredMetricsCount(t, PreemptionTargetRecomputationsTotal, 1, "cluster_queue", "cluster_queue1", "result", string(PreemptionTargetRecomputationResultNewTargets))
+	expectFilteredMetricsCount(t, PreemptionTargetRecomputationsTotal, 1, "cluster_queue", "cluster_queue1", "result", string(PreemptionTargetRecomputationResultDeferredFit))
+	expectFilteredMetricsCount(t, PreemptionTargetRecomputationsTotal, 1, "cluster_queue", "cluster_queue1", "result", string(PreemptionTargetRecomputationResultSkipped))
+
+	ClearClusterQueueMetrics("cluster_queue1")
+	expectFilteredMetricsCount(t, PreemptionTargetRecomputationsTotal, 0, "cluster_queue", "cluster_queue1")
 }
 
 func TestReportAndCleanupLocalQueueEvictedNumber(t *testing.T) {
@@ -407,7 +496,8 @@ func TestMetricsWithDifferentRoles(t *testing.T) {
 func TestClearClusterQueueMetricsOnLabelChangeOnlyClearsScopedGaugeMetrics(t *testing.T) {
 	const cqName = "cq-label-change"
 
-	ReportPendingWorkloads(cqName, 3, 1, nil, nil)
+	ReportPendingWorkloads(cqName, PendingStatusActive, 3, nil, nil)
+	ReportPendingWorkloads(cqName, PendingStatusInadmissible, 1, nil, nil)
 	ReportClusterQueueWeightedShare(cqName, "cohort", 7, nil, nil)
 	ReportReplacedWorkloadSlices(cqName, nil, nil)
 
@@ -431,7 +521,8 @@ func TestClearCacheMetricsOnlyClearsCacheScopedGauges(t *testing.T) {
 	ReportAdmittedActiveWorkloads(cqName, 3, nil, nil)
 	ReportReservingActiveWorkloads(cqName, 1, nil, nil)
 	ReportClusterQueueQuotas("cohort", cqName, "flavor", "cpu", 10, 5, 3, nil, nil)
-	ReportPendingWorkloads(cqName, 4, 2, nil, nil)
+	ReportPendingWorkloads(cqName, PendingStatusActive, 4, nil, nil)
+	ReportPendingWorkloads(cqName, PendingStatusInadmissible, 2, nil, nil)
 
 	expectFilteredMetricsCount(t, ClusterQueueByStatus, 3, "cluster_queue", cqName)
 	expectFilteredMetricsCount(t, AdmittedActiveWorkloads, 1, "cluster_queue", cqName)
@@ -567,4 +658,29 @@ func TestClearCohortMetricsOnlyClearsScopedGauges(t *testing.T) {
 	expectFilteredMetricsCount(t, CohortSubtreeAdmittedActiveWorkloads, 1, "cohort", cohortName)
 
 	ClearCohortAdmittedWorkloadsMetrics(cohortName)
+}
+
+func TestWorkloadRecoveryWaitTimeMetrics(t *testing.T) {
+	cqName := kueue.ClusterQueueReference("cq-recovery-test")
+	lqRef := LocalQueueReference{Name: "lq-recovery-test", Namespace: "default"}
+
+	// Positive wait times
+	ReportWorkloadRecoveryWaitTime(cqName, "default", 5*time.Second, nil, nil)
+	expectHistogramSampleSum(t, WorkloadRecoveryWaitTime, 5.0, "cq-recovery-test", "default", roletracker.RoleStandalone)
+
+	ReportLocalQueueWorkloadRecoveryWaitTime(lqRef, "default", 5*time.Second, nil, nil)
+	expectHistogramSampleSum(t, LocalQueueWorkloadRecoveryWaitTime, 5.0, "lq-recovery-test", "default", "default", roletracker.RoleStandalone)
+
+	// Negative wait times
+	ReportWorkloadRecoveryWaitTime(cqName, "default", -5*time.Second, nil, nil)
+	expectHistogramSampleSum(t, WorkloadRecoveryWaitTime, 5.0, "cq-recovery-test", "default", roletracker.RoleStandalone)
+
+	ReportLocalQueueWorkloadRecoveryWaitTime(lqRef, "default", -5*time.Second, nil, nil)
+	expectHistogramSampleSum(t, LocalQueueWorkloadRecoveryWaitTime, 5.0, "lq-recovery-test", "default", "default", roletracker.RoleStandalone)
+
+	ClearClusterQueueMetrics(cqName)
+	expectFilteredMetricsCount(t, WorkloadRecoveryWaitTime, 0, "cluster_queue", "cq-recovery-test")
+
+	ClearLocalQueueMetrics(lqRef)
+	expectFilteredMetricsCount(t, LocalQueueWorkloadRecoveryWaitTime, 0, "name", "lq-recovery-test", "namespace", "default")
 }

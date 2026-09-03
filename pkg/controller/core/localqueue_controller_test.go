@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	testingclock "k8s.io/utils/clock/testing"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -51,19 +50,23 @@ const (
 	resourceGPU = corev1.ResourceName("GPU")
 )
 
+const pendingWlKey queueafs.WorkloadReference = "ns/pending-wl"
+
 func TestLocalQueueReconcile(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	clock := testingclock.NewFakeClock(time.Now().Truncate(time.Second))
 	cases := map[string]struct {
 		clusterQueue             *kueue.ClusterQueue
+		deleteClusterQueue       bool
 		localQueue               *kueue.LocalQueue
 		wantLocalQueue           *kueue.LocalQueue
 		wantError                error
 		afsConfig                *config.AdmissionFairSharing
 		runningWls               []kueue.Workload
 		wantRequeueAfter         *time.Duration
-		initialConsumedResources queueafs.ConsumedResourcesEntry
-		wantConsumedResources    *queueafs.ConsumedResourcesEntry
+		initialConsumedResources queueafs.UsageLedgerEntry
+		pendingEntryPenalty      corev1.ResourceList
+		wantConsumedResources    *queueafs.UsageLedgerEntry
 	}{
 		"local queue with Hold StopPolicy": {
 			clusterQueue: utiltestingapi.MakeClusterQueue("test-cluster-queue").
@@ -135,6 +138,37 @@ func TestLocalQueueReconcile(t *testing.T) {
 				Obj(),
 			wantError: nil,
 		},
+		"cluster queue deleted while its scheduler cache entry is still present": {
+			clusterQueue: utiltestingapi.MakeClusterQueue("test-cluster-queue").
+				ResourceGroup(*utiltestingapi.MakeFlavorQuotas("rf").Resource(corev1.ResourceCPU, "10").Obj()).
+				Active(metav1.ConditionTrue).
+				Obj(),
+			deleteClusterQueue: true,
+			localQueue: utiltestingapi.MakeLocalQueue("test-queue", "default").
+				ClusterQueue("test-cluster-queue").
+				Generation(1).
+				Obj(),
+			runningWls: []kueue.Workload{
+				*utiltestingapi.MakeWorkload("wl", "default").
+					Queue("test-queue").
+					Request(corev1.ResourceCPU, "4").
+					SimpleReserveQuota("test-cluster-queue", "rf", now).
+					AdmittedAt(true, now).
+					Obj(),
+			},
+			wantLocalQueue: utiltestingapi.MakeLocalQueue("test-queue", "default").
+				ClusterQueue("test-cluster-queue").
+				Generation(1).
+				Condition(
+					kueue.LocalQueueActive,
+					metav1.ConditionFalse,
+					"ClusterQueueDoesNotExist",
+					clusterQueueIsInactiveMsg,
+					1,
+				).
+				Obj(),
+			wantError: nil,
+		},
 		"local queue decaying usage decays if there is no running workloads": {
 			clusterQueue: utiltestingapi.MakeClusterQueue("cq").
 				Active(metav1.ConditionTrue).
@@ -146,7 +180,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					Weight: new(resource.MustParse("1")),
 				}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("8"),
 				},
@@ -173,6 +207,63 @@ func TestLocalQueueReconcile(t *testing.T) {
 				UsageSamplingInterval: metav1.Duration{Duration: 5 * time.Minute},
 			},
 		},
+		"clamps a future LastUpdate stamped by a concurrent settlement": {
+			clusterQueue: utiltestingapi.MakeClusterQueue("cq").
+				Active(metav1.ConditionTrue).
+				Obj(),
+			localQueue: utiltestingapi.MakeLocalQueue("test-queue", "default").
+				ClusterQueue("cq").
+				Active(metav1.ConditionTrue).
+				FairSharing(&kueue.FairSharing{
+					Weight: new(resource.MustParse("1")),
+				}).
+				Obj(),
+			initialConsumedResources: queueafs.UsageLedgerEntry{
+				Resources: corev1.ResourceList{
+					corev1.ResourceCPU: resource.MustParse("8"),
+				},
+				// A concurrent settlement stamped a LastUpdate later than now.
+				LastUpdate:      now.Add(5 * time.Minute),
+				StatusAccounted: true,
+			},
+			// A pending penalty lets the tick run despite the not-yet-stale
+			// (future) LastUpdate, exercising the clamp instead of an early requeue.
+			pendingEntryPenalty: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+			wantLocalQueue: utiltestingapi.MakeLocalQueue("test-queue", "default").
+				ClusterQueue("cq").
+				Active(metav1.ConditionTrue).
+				FairSharing(&kueue.FairSharing{
+					Weight: new(resource.MustParse("1")),
+				}).
+				FairSharingStatus(
+					&kueue.LocalQueueFairSharingStatus{
+						AdmissionFairSharingStatus: &kueue.LocalQueueAdmissionFairSharingStatus{
+							ConsumedResources: map[corev1.ResourceName]resource.Quantity{
+								// elapsed clamps to 0, so the persisted status keeps
+								// the usage verbatim instead of inflating it via the
+								// negative-elapsed path.
+								corev1.ResourceCPU: resource.MustParse("8"),
+							},
+						},
+					}).
+				Obj(),
+			wantConsumedResources: &queueafs.UsageLedgerEntry{
+				Resources: corev1.ResourceList{
+					corev1.ResourceCPU: resource.MustParse("8"),
+				},
+				// Monotonic: the stored timestamp keeps the later value.
+				LastUpdate:      now.Add(5 * time.Minute),
+				StatusAccounted: true,
+			},
+			afsConfig: &config.AdmissionFairSharing{
+				UsageHalfLifeTime:     metav1.Duration{Duration: 5 * time.Minute},
+				UsageSamplingInterval: metav1.Duration{Duration: 5 * time.Minute},
+			},
+			// The full interval pins that the tick ran; the sampling-interval
+			// guard short-circuit would return interval minus the (negative)
+			// sinceLastUpdate instead.
+			wantRequeueAfter: new(5 * time.Minute),
+		},
 		"local queue decaying usage sums the previous state and running workloads": {
 			clusterQueue: utiltestingapi.MakeClusterQueue("cq").
 				Active(metav1.ConditionTrue).
@@ -184,7 +275,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					Weight: new(resource.MustParse("1")),
 				}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("8"),
 				},
@@ -232,7 +323,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					Weight: new(resource.MustParse("1")),
 				}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("8"),
 					resourceGPU:        resource.MustParse("16"),
@@ -294,7 +385,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					Weight: new(resource.MustParse("1")),
 				}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("8"),
 				},
@@ -313,7 +404,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					&kueue.LocalQueueFairSharingStatus{
 						AdmissionFairSharingStatus: &kueue.LocalQueueAdmissionFairSharingStatus{
 							ConsumedResources: map[corev1.ResourceName]resource.Quantity{
-								corev1.ResourceCPU: resource.MustParse("6827m"),
+								corev1.ResourceCPU: resource.MustParse("6828427124n"),
 							},
 						},
 					}).
@@ -342,7 +433,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					Weight: new(resource.MustParse("1")),
 				}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("8"),
 				},
@@ -359,7 +450,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					&kueue.LocalQueueFairSharingStatus{
 						AdmissionFairSharingStatus: &kueue.LocalQueueAdmissionFairSharingStatus{
 							ConsumedResources: map[corev1.ResourceName]resource.Quantity{
-								corev1.ResourceCPU: resource.MustParse("7980m"),
+								corev1.ResourceCPU: resource.MustParse("7980769063n"),
 							},
 						},
 					}).
@@ -380,7 +471,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					Weight: new(resource.MustParse("1")),
 				}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					resourceGPU: resource.MustParse("8"),
 				},
@@ -399,7 +490,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					&kueue.LocalQueueFairSharingStatus{
 						AdmissionFairSharingStatus: &kueue.LocalQueueAdmissionFairSharingStatus{
 							ConsumedResources: map[corev1.ResourceName]resource.Quantity{
-								resourceGPU: resource.MustParse("6827m"),
+								resourceGPU: resource.MustParse("6828427124n"),
 							},
 						},
 					}).
@@ -428,7 +519,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					Weight: new(resource.MustParse("1")),
 				}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					resourceGPU: resource.MustParse("8"),
 				},
@@ -480,7 +571,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 						},
 					}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("8"),
 				},
@@ -502,7 +593,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 						},
 					}).
 				Obj(),
-			wantRequeueAfter: ptr.To(time.Minute),
+			wantRequeueAfter: new(time.Minute),
 			afsConfig: &config.AdmissionFairSharing{
 				UsageHalfLifeTime:     metav1.Duration{Duration: 5 * time.Minute},
 				UsageSamplingInterval: metav1.Duration{Duration: 5 * time.Minute},
@@ -662,7 +753,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 						},
 					}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("2"),
 				},
@@ -695,7 +786,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 						},
 					}).
 				Obj(),
-			wantConsumedResources: &queueafs.ConsumedResourcesEntry{
+			wantConsumedResources: &queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("7"),
 				},
@@ -730,7 +821,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 						},
 					}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("2"),
 				},
@@ -763,7 +854,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 						},
 					}).
 				Obj(),
-			wantConsumedResources: &queueafs.ConsumedResourcesEntry{
+			wantConsumedResources: &queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("3"),
 				},
@@ -786,7 +877,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 					Weight: new(resource.MustParse("1")),
 				}).
 				Obj(),
-			initialConsumedResources: queueafs.ConsumedResourcesEntry{
+			initialConsumedResources: queueafs.UsageLedgerEntry{
 				Resources: corev1.ResourceList{
 					corev1.ResourceCPU: resource.MustParse("500m"),
 				},
@@ -802,7 +893,7 @@ func TestLocalQueueReconcile(t *testing.T) {
 				}).
 				Obj(),
 			// 5s interval - 1s elapsed = 4s remaining
-			wantRequeueAfter: ptr.To(4 * time.Second),
+			wantRequeueAfter: new(4 * time.Second),
 			afsConfig: &config.AdmissionFairSharing{
 				UsageHalfLifeTime:     metav1.Duration{Duration: 60 * time.Second},
 				UsageSamplingInterval: metav1.Duration{Duration: 5 * time.Second},
@@ -836,11 +927,21 @@ func TestLocalQueueReconcile(t *testing.T) {
 				t.Fatalf("Unexpected error: %v", err)
 			}
 			_ = qManager.AddLocalQueue(ctxWithLogger, tc.localQueue)
+			if tc.deleteClusterQueue {
+				if err := cl.Delete(ctxWithLogger, tc.clusterQueue); err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
 			if tc.initialConsumedResources.Resources != nil {
 				lqKey := utilqueue.Key(tc.localQueue)
-				qManager.AfsConsumedResources.Update(lqKey, func(queueafs.ConsumedResourcesEntry, bool) queueafs.ConsumedResourcesEntry {
+				qManager.AfsUsageLedger.Update(lqKey, func(queueafs.UsageLedgerEntry, bool) queueafs.UsageLedgerEntry {
 					return tc.initialConsumedResources
 				})
+			}
+			if tc.pendingEntryPenalty != nil {
+				// A pending entry penalty bypasses the sampling-interval guard so
+				// the tick runs even when the cached LastUpdate is not yet stale.
+				qManager.AfsUsageLedger.PushPenalty(utilqueue.Key(tc.localQueue), pendingWlKey, tc.pendingEntryPenalty, clock.Now())
 			}
 			reconciler := NewLocalQueueReconciler(cl, qManager, cqCache,
 				WithClock(clock),
@@ -881,10 +982,19 @@ func TestLocalQueueReconcile(t *testing.T) {
 				t.Errorf("Workloads after reconcile (-want,+got):\n%s", diff)
 			}
 
+			if tc.pendingEntryPenalty != nil {
+				// The per-Workload record must survive the tick's entry rewrite,
+				// or the later settlement finds nothing to fold.
+				gotEntry, _ := qManager.AfsUsageLedger.Get(utilqueue.Key(tc.localQueue))
+				if !gotEntry.HasPenaltyRecord(pendingWlKey) {
+					t.Error("the reconcile tick dropped the pending per-Workload penalty record")
+				}
+			}
+
 			if tc.wantConsumedResources != nil {
-				gotEntry, found := qManager.AfsConsumedResources.Get(utilqueue.Key(tc.localQueue))
+				gotEntry, found := qManager.AfsUsageLedger.Get(utilqueue.Key(tc.localQueue))
 				if !found {
-					t.Fatal("expected an AfsConsumedResources entry after reconcile")
+					t.Fatal("expected an AfsUsageLedger entry after reconcile")
 				}
 				if diff := cmp.Diff(tc.wantConsumedResources.Resources, gotEntry.Resources, cmpopts.EquateEmpty()); diff != "" {
 					t.Errorf("unexpected consumed resources in cache entry (-want,+got):\n%s", diff)
@@ -950,14 +1060,14 @@ func TestLocalQueueReconcileReportsAdmissionFairSharingUsageMetric(t *testing.T)
 	if err := qManager.AddLocalQueue(ctx, localQueue); err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	qManager.AfsConsumedResources.Set(lqKey, corev1.ResourceList{
+	qManager.AfsUsageLedger.SetForTest(lqKey, corev1.ResourceList{
 		corev1.ResourceCPU: resource.MustParse("8"),
 		resourceGPU:        resource.MustParse("4"),
 	}, now.Add(-5*time.Minute))
-	qManager.AfsEntryPenalties.Push(lqKey, corev1.ResourceList{
+	qManager.AfsUsageLedger.PushPenalty(lqKey, pendingWlKey, corev1.ResourceList{
 		corev1.ResourceCPU: resource.MustParse("1"),
 		resourceGPU:        resource.MustParse("1"),
-	})
+	}, now)
 
 	reconciler := NewLocalQueueReconciler(cl, qManager, cqCache,
 		WithClock(clock),

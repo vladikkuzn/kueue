@@ -36,8 +36,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	configapi "sigs.k8s.io/kueue/apis/config/v1beta2"
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/cache/hierarchy"
+	"sigs.k8s.io/kueue/pkg/features"
+	"sigs.k8s.io/kueue/pkg/metrics"
 	"sigs.k8s.io/kueue/pkg/resources"
 	"sigs.k8s.io/kueue/pkg/util/queue"
 	utiltesting "sigs.k8s.io/kueue/pkg/util/testing"
@@ -473,7 +476,7 @@ func TestCacheClusterQueueOperations(t *testing.T) {
 							TotalRequests: []workload.PodSetResources{
 								{
 									Name:     kueue.DefaultPodSetName,
-									Requests: resources.Requests{corev1.ResourceCPU: 5000},
+									Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 5000}),
 									Count:    1,
 									Flavors:  map[corev1.ResourceName]kueue.ResourceFlavorReference{corev1.ResourceCPU: "default"},
 								},
@@ -917,7 +920,7 @@ func TestCacheClusterQueueOperations(t *testing.T) {
 							TotalRequests: []workload.PodSetResources{
 								{
 									Name:     kueue.DefaultPodSetName,
-									Requests: resources.Requests{corev1.ResourceCPU: 1000},
+									Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000}),
 									Count:    1,
 									Flavors: map[corev1.ResourceName]kueue.ResourceFlavorReference{
 										corev1.ResourceCPU: "f1",
@@ -930,7 +933,7 @@ func TestCacheClusterQueueOperations(t *testing.T) {
 							TotalRequests: []workload.PodSetResources{
 								{
 									Name:     kueue.DefaultPodSetName,
-									Requests: resources.Requests{corev1.ResourceCPU: 1000},
+									Requests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000}),
 									Count:    1,
 									Flavors: map[corev1.ResourceName]kueue.ResourceFlavorReference{
 										corev1.ResourceCPU: "f1",
@@ -1065,6 +1068,7 @@ func TestCacheClusterQueueOperations(t *testing.T) {
 				cmpopts.IgnoreFields(clusterQueue{}, "ResourceGroups"),
 				cmpopts.IgnoreFields(workload.Info{}, "Obj", "LastAssignment", "SchedulingHash"),
 				cmpopts.IgnoreUnexported(clusterQueue{}, hierarchy.ClusterQueue[*cohort]{}),
+				cmp.Comparer(resources.Equal),
 				cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("Unexpected clusterQueues (-want,+got):\n%s", diff)
 			}
@@ -2165,7 +2169,8 @@ func TestGetCacheLQ(t *testing.T) {
 			getLq:          lq,
 			getCQReference: "cq",
 			wantLq: &LocalQueue{
-				key: "ns/lq-a",
+				key:               "ns/lq-a",
+				resourceFormatter: resources.NewResourceFormatter(),
 			}},
 		"LQ doesnt exist": {
 			getLq:          utiltestingapi.MakeLocalQueue("non-existing-lq", "ns").ClusterQueue("cq").Obj(),
@@ -2192,7 +2197,7 @@ func TestGetCacheLQ(t *testing.T) {
 
 			lqKey := queue.Key(tc.getLq)
 			gotLq, gotErr := cache.GetCacheLocalQueue(tc.getCQReference, lqKey)
-			if diff := cmp.Diff(tc.wantLq, gotLq, cmp.AllowUnexported(LocalQueue{}), cmpopts.EquateEmpty(), cmpopts.IgnoreTypes(sync.RWMutex{})); diff != "" {
+			if diff := cmp.Diff(tc.wantLq, gotLq, cmp.AllowUnexported(LocalQueue{}, resources.ResourceFormatter{}), cmpopts.EquateEmpty(), cmpopts.IgnoreTypes(sync.RWMutex{})); diff != "" {
 				t.Errorf("Unexpected localQueues (-want,+got):\n%s", diff)
 			}
 			if diff := cmp.Diff(tc.wantErr, gotErr, cmpopts.EquateErrors()); diff != "" {
@@ -2602,6 +2607,11 @@ func TestCacheQueueOperations(t *testing.T) {
 		// Not tested: changing a workload's queue and changing a queue's cluster queue.
 		// These operations should not be allowed by the webhook.
 	}
+	for _, tc := range cases {
+		for _, localQueue := range tc.wantLocalQueues {
+			localQueue.resourceFormatter = resources.NewResourceFormatter()
+		}
+	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			cl := utiltesting.NewFakeClient()
@@ -2622,7 +2632,7 @@ func TestCacheQueueOperations(t *testing.T) {
 				}
 			}
 			cmpOpts := []cmp.Option{
-				cmp.AllowUnexported(LocalQueue{}),
+				cmp.AllowUnexported(LocalQueue{}, resources.ResourceFormatter{}),
 				cmpopts.EquateEmpty(),
 				cmpopts.IgnoreTypes(sync.RWMutex{}),
 				cmp.FilterValues(func(a, b resources.FlavorResourceQuantities) bool { return len(a) != 0 || len(b) != 0 }, cmp.Comparer(equalFlavorResourceQuantitiesIgnoringZero)),
@@ -2703,6 +2713,83 @@ func TestClusterQueuesUsingFlavor(t *testing.T) {
 	}
 }
 
+func TestClusterQueuesForResources(t *testing.T) {
+	defaultRf := utiltestingapi.MakeResourceFlavor("default").Obj()
+	gpuCq := utiltestingapi.MakeClusterQueue("gpu-cq").
+		ResourceGroup(
+			*utiltestingapi.MakeFlavorQuotas("default").Resource("gpu.nvidia.com/mig-1g.10gb", "10").Obj()).
+		Obj()
+	cpuCq := utiltestingapi.MakeClusterQueue("cpu-cq").
+		ResourceGroup(
+			*utiltestingapi.MakeFlavorQuotas("default").Resource("cpu", "100").Obj()).
+		Obj()
+	multiCq := utiltestingapi.MakeClusterQueue("multi-cq").
+		ResourceGroup(
+			*utiltestingapi.MakeFlavorQuotas("default").Resource("cpu", "50").Resource("gpu.nvidia.com/mig-1g.10gb", "5").Obj()).
+		Obj()
+	emptyCq := utiltestingapi.MakeClusterQueue("empty-cq").Obj()
+
+	tests := []struct {
+		name          string
+		clusterQueues []*kueue.ClusterQueue
+		resourceNames []corev1.ResourceName
+		wantCQNames   []kueue.ClusterQueueReference
+	}{
+		{
+			name:          "matches CQ covering the resource",
+			clusterQueues: []*kueue.ClusterQueue{gpuCq, cpuCq},
+			resourceNames: []corev1.ResourceName{"gpu.nvidia.com/mig-1g.10gb"},
+			wantCQNames:   []kueue.ClusterQueueReference{"gpu-cq"},
+		},
+		{
+			name:          "no match returns empty",
+			clusterQueues: []*kueue.ClusterQueue{cpuCq},
+			resourceNames: []corev1.ResourceName{"gpu.nvidia.com/mig-1g.10gb"},
+		},
+		{
+			name:          "matches multiple CQs covering the resource",
+			clusterQueues: []*kueue.ClusterQueue{gpuCq, cpuCq, multiCq},
+			resourceNames: []corev1.ResourceName{"gpu.nvidia.com/mig-1g.10gb"},
+			wantCQNames:   []kueue.ClusterQueueReference{"gpu-cq", "multi-cq"},
+		},
+		{
+			name:          "matches on any of the requested resources",
+			clusterQueues: []*kueue.ClusterQueue{gpuCq, cpuCq},
+			resourceNames: []corev1.ResourceName{"gpu.nvidia.com/mig-1g.10gb", "cpu"},
+			wantCQNames:   []kueue.ClusterQueueReference{"gpu-cq", "cpu-cq"},
+		},
+		{
+			name:          "empty resource names returns empty",
+			clusterQueues: []*kueue.ClusterQueue{gpuCq},
+			resourceNames: []corev1.ResourceName{},
+		},
+		{
+			name:          "CQ with no resource groups is not matched",
+			clusterQueues: []*kueue.ClusterQueue{emptyCq},
+			resourceNames: []corev1.ResourceName{"cpu"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, log := utiltesting.ContextWithLog(t)
+			cache := New(utiltesting.NewFakeClient())
+			cache.AddOrUpdateResourceFlavor(log, defaultRf)
+
+			for _, cq := range tc.clusterQueues {
+				if err := cache.AddClusterQueue(ctx, cq); err != nil {
+					t.Fatalf("failed to add clusterQueue %s: %v", cq.Name, err)
+				}
+			}
+
+			got := cache.ClusterQueuesForResources(sets.New(tc.resourceNames...))
+			wantCQs := sets.New(tc.wantCQNames...)
+			if diff := cmp.Diff(wantCQs, got, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("ClusterQueuesForResources mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestMatchingClusterQueues(t *testing.T) {
 	clusterQueues := []*kueue.ClusterQueue{
 		utiltestingapi.MakeClusterQueue("matching1").
@@ -2733,6 +2820,98 @@ func TestMatchingClusterQueues(t *testing.T) {
 	gotCQs := cache.MatchingClusterQueues(map[string]string{"dep": "eng"})
 	if diff := cmp.Diff(wantCQs, gotCQs); diff != "" {
 		t.Errorf("Wrong ClusterQueues (-want,+got):\n%s", diff)
+	}
+}
+
+// TestMatchingClusterQueuesAfterFailedUpdate covers ClusterQueues that stay in the
+// hierarchy manager after updateClusterQueue returns an error, since Namespace events
+// keep matching against them.
+func TestMatchingClusterQueuesAfterFailedUpdate(t *testing.T) {
+	teamSelector := func(team string) *metav1.LabelSelector {
+		return &metav1.LabelSelector{MatchLabels: map[string]string{"team": team}}
+	}
+	addCohortCycle := func(t *testing.T, cache *Cache) {
+		t.Helper()
+		if err := cache.AddOrUpdateCohort(utiltestingapi.MakeCohort("cycle-a").Parent("cycle-b").Obj()); err != nil {
+			t.Fatal(err)
+		}
+		if err := cache.AddOrUpdateCohort(utiltestingapi.MakeCohort("cycle-b").Parent("cycle-a").Obj()); err == nil {
+			t.Fatal("Expected failure when cycle")
+		}
+	}
+
+	cases := map[string]struct {
+		setup       func(*testing.T, *Cache)
+		wantMatch   []map[string]string
+		wantNoMatch []map[string]string
+	}{
+		"add into cyclic cohort applies the configured selector": {
+			setup: func(t *testing.T, cache *Cache) {
+				ctx, _ := utiltesting.ContextWithLog(t)
+				addCohortCycle(t, cache)
+				cq := utiltestingapi.MakeClusterQueue("cq").
+					Cohort("cycle-a").
+					NamespaceSelector(teamSelector("eng")).
+					Obj()
+				if err := cache.AddClusterQueue(ctx, cq); err == nil {
+					t.Fatal("Expected failure when adding cq to cohort with cycle")
+				}
+			},
+			wantMatch:   []map[string]string{{"team": "eng"}},
+			wantNoMatch: []map[string]string{{"team": "ops"}},
+		},
+		"update into cyclic cohort applies the new selector": {
+			setup: func(t *testing.T, cache *Cache) {
+				ctx, log := utiltesting.ContextWithLog(t)
+				cq := utiltestingapi.MakeClusterQueue("cq").
+					NamespaceSelector(teamSelector("eng")).
+					Obj()
+				if err := cache.AddClusterQueue(ctx, cq); err != nil {
+					t.Fatal(err)
+				}
+				addCohortCycle(t, cache)
+				updated := utiltestingapi.MakeClusterQueue("cq").
+					Cohort("cycle-a").
+					NamespaceSelector(teamSelector("ops")).
+					Obj()
+				if err := cache.UpdateClusterQueue(log, updated); err == nil {
+					t.Fatal("Expected failure when updating cq to cohort with cycle")
+				}
+			},
+			wantMatch:   []map[string]string{{"team": "ops"}},
+			wantNoMatch: []map[string]string{{"team": "eng"}},
+		},
+		"add with an unparsable selector matches no Namespace": {
+			setup: func(t *testing.T, cache *Cache) {
+				ctx, _ := utiltesting.ContextWithLog(t)
+				cq := utiltestingapi.MakeClusterQueue("cq").
+					NamespaceSelector(teamSelector("not a valid label value")).
+					Obj()
+				if err := cache.AddClusterQueue(ctx, cq); err == nil {
+					t.Fatal("Expected failure when adding cq with an unparsable selector")
+				}
+			},
+			wantNoMatch: []map[string]string{nil, {"team": "eng"}},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cache := New(utiltesting.NewFakeClient())
+			tc.setup(t, cache)
+
+			for _, nsLabels := range tc.wantMatch {
+				want := sets.New[kueue.ClusterQueueReference]("cq")
+				if diff := cmp.Diff(want, cache.MatchingClusterQueues(nsLabels)); diff != "" {
+					t.Errorf("MatchingClusterQueues(%v) returned unexpected ClusterQueues (-want,+got):\n%s", nsLabels, diff)
+				}
+			}
+			for _, nsLabels := range tc.wantNoMatch {
+				want := sets.New[kueue.ClusterQueueReference]()
+				if diff := cmp.Diff(want, cache.MatchingClusterQueues(nsLabels)); diff != "" {
+					t.Errorf("MatchingClusterQueues(%v) returned unexpected ClusterQueues (-want,+got):\n%s", nsLabels, diff)
+				}
+			}
+		})
 	}
 }
 
@@ -4011,4 +4190,61 @@ func TestAncestors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLocalQueueCustomMetricLabelsRace(t *testing.T) {
+	ctx, _ := utiltesting.ContextWithLog(t)
+	defer metrics.InitMetricVectors(nil)
+	features.SetFeatureGateDuringTest(t, features.CustomMetricLabels, true)
+	features.SetFeatureGateDuringTest(t, features.LocalQueueMetrics, true)
+
+	customLabels := metrics.NewCustomLabels([]configapi.ControllerMetricsCustomLabel{{Name: "team"}})
+	cache := New(
+		utiltesting.NewFakeClient(),
+		WithCustomLabels(customLabels),
+		WithLocalQueueMetrics(&metrics.LocalQueueMetricsConfig{
+			Enabled:       true,
+			QueueSelector: labels.Everything(),
+		}),
+	)
+
+	if err := cache.AddClusterQueue(ctx, utiltestingapi.MakeClusterQueue("cq").Obj()); err != nil {
+		t.Fatalf("Failed to add cluster queue: %v", err)
+	}
+
+	oldLQ := utiltestingapi.MakeLocalQueue("lq", "ns").ClusterQueue("cq").Label("team", "alpha").Obj()
+	if err := cache.AddLocalQueue(oldLQ); err != nil {
+		t.Fatalf("Failed to add local queue: %v", err)
+	}
+
+	lqRef := queue.NewLocalQueueReference("ns", kueue.LocalQueueName("lq"))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		<-start
+		prev := oldLQ
+		for i := range 10000 {
+			next := prev.DeepCopy()
+			next.Labels = map[string]string{"team": "alpha"}
+			if i%2 == 0 {
+				next.Labels["team"] = "beta"
+			}
+			if err := cache.UpdateLocalQueue(prev, next); err != nil {
+				t.Errorf("Failed to update local queue: %v", err)
+				return
+			}
+			prev = next
+		}
+	})
+
+	wg.Go(func() {
+		<-start
+		for range 10000 {
+			cache.ResyncLocalQueueGaugeMetrics(kueue.ClusterQueueReference("cq"), lqRef)
+		}
+	})
+
+	close(start)
+	wg.Wait()
 }

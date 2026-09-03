@@ -45,12 +45,14 @@ const (
 	DefaultClientConnectionBurst          int32   = 500
 	defaultJobFrameworkName                       = "batch/job"
 	DefaultMultiKueueGCInterval                   = time.Minute
+	DefaultWaitForPodsReadyTimeout                = 30 * time.Minute
 	DefaultMultiKueueOrigin                       = "multikueue"
 	DefaultMultiKueueWorkerLostTimeout            = 15 * time.Minute
 	DefaultRequeuingBackoffBaseSeconds            = 60
 	DefaultRequeuingBackoffMaxSeconds             = 3600
 	DefaultResourceTransformationStrategy         = Retain
 	DefaultVisibilityBindPort                     = 8082
+	DefaultCustomMetricLabelSourceKind            = SourceKindClusterQueue
 )
 
 func getOperatorNamespace() string {
@@ -94,14 +96,27 @@ func SetDefaults_Configuration(cfg *Configuration) {
 	cfg.ClientConnection.QPS = cmp.Or(cfg.ClientConnection.QPS, new(DefaultClientConnectionQPS))
 	cfg.ClientConnection.Burst = cmp.Or(cfg.ClientConnection.Burst, new(DefaultClientConnectionBurst))
 
+	cfg.WaitForPodsReady = cmp.Or(
+		cfg.WaitForPodsReady,
+		&WaitForPodsReady{},
+	)
+
+	if cfg.WaitForPodsReady.Timeout.Duration == 0 {
+		cfg.WaitForPodsReady.Timeout = metav1.Duration{
+			Duration: DefaultWaitForPodsReadyTimeout,
+		}
+	}
+
 	if cfg.WaitForPodsReady != nil {
 		cfg.WaitForPodsReady.BlockAdmission = cmp.Or(cfg.WaitForPodsReady.BlockAdmission, new(false))
 		cfg.WaitForPodsReady.RecoveryTimeout = cmp.Or(cfg.WaitForPodsReady.RecoveryTimeout, &cfg.WaitForPodsReady.Timeout)
 		cfg.WaitForPodsReady.RequeuingStrategy = cmp.Or(cfg.WaitForPodsReady.RequeuingStrategy, &RequeuingStrategy{})
 		cfg.WaitForPodsReady.RequeuingStrategy.Timestamp = cmp.Or(cfg.WaitForPodsReady.RequeuingStrategy.Timestamp, new(EvictionTimestamp))
-		cfg.WaitForPodsReady.RequeuingStrategy.BackoffBaseSeconds = cmp.Or(cfg.WaitForPodsReady.RequeuingStrategy.BackoffBaseSeconds, ptr.To[int32](DefaultRequeuingBackoffBaseSeconds))
-		cfg.WaitForPodsReady.RequeuingStrategy.BackoffMaxSeconds = cmp.Or(cfg.WaitForPodsReady.RequeuingStrategy.BackoffMaxSeconds, ptr.To[int32](DefaultRequeuingBackoffMaxSeconds))
+		cfg.WaitForPodsReady.RequeuingStrategy.BackoffBaseSeconds = cmp.Or(cfg.WaitForPodsReady.RequeuingStrategy.BackoffBaseSeconds, new(int32(DefaultRequeuingBackoffBaseSeconds)))
+		cfg.WaitForPodsReady.RequeuingStrategy.BackoffMaxSeconds = cmp.Or(cfg.WaitForPodsReady.RequeuingStrategy.BackoffMaxSeconds, new(int32(DefaultRequeuingBackoffMaxSeconds)))
 	}
+
+	cfg.QuotaReleaseStrategy = cmp.Or(cfg.QuotaReleaseStrategy, new(QuotaReleaseOnTerminating))
 
 	cfg.Integrations = cmp.Or(cfg.Integrations, &Integrations{})
 	if len(cfg.Integrations.Frameworks) == 0 {
@@ -133,7 +148,7 @@ func SetDefaults_Configuration(cfg *Configuration) {
 		afs.UsageSamplingInterval.Duration = cmp.Or(afs.UsageSamplingInterval.Duration, 5*time.Minute)
 	}
 	cfg.VisibilityServer = cmp.Or(cfg.VisibilityServer, &VisibilityServerConfiguration{})
-	cfg.VisibilityServer.BindPort = cmp.Or(cfg.VisibilityServer.BindPort, ptr.To[int32](DefaultVisibilityBindPort))
+	cfg.VisibilityServer.BindPort = cmp.Or(cfg.VisibilityServer.BindPort, new(int32(DefaultVisibilityBindPort)))
 
 	if cfg.Resources != nil {
 		for idx := range cfg.Resources.Transformations {

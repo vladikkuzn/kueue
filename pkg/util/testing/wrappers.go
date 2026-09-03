@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	utilResource "sigs.k8s.io/kueue/pkg/util/resource"
@@ -111,6 +110,17 @@ func MakeLimitRange(name, namespace string) *LimitRangeWrapper {
 
 func (lr *LimitRangeWrapper) WithType(t corev1.LimitType) *LimitRangeWrapper {
 	lr.Spec.Limits[0].Type = t
+	return lr
+}
+
+// LimitTypes replaces the LimitRange's items with one bare item per given type,
+// or clears them when called with no arguments.
+func (lr *LimitRangeWrapper) LimitTypes(types ...corev1.LimitType) *LimitRangeWrapper {
+	items := make([]corev1.LimitRangeItem, len(types))
+	for i, t := range types {
+		items[i] = corev1.LimitRangeItem{Type: t}
+	}
+	lr.Spec.Limits = items
 	return lr
 }
 
@@ -202,7 +212,7 @@ func (c *ContainerWrapper) WithEnvVar(envVar corev1.EnvVar) *ContainerWrapper {
 
 // AsSidecar makes the container a sidecar when used as an Init Container.
 func (c *ContainerWrapper) AsSidecar() *ContainerWrapper {
-	c.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
+	c.RestartPolicy = new(corev1.ContainerRestartPolicyAlways)
 
 	return c
 }
@@ -478,6 +488,22 @@ func (b *ResourceClaimSpecBuilder) WithAdminAccess(enabled bool) *ResourceClaimS
 	return b
 }
 
+func (b *ResourceClaimSpecBuilder) WithCapacityRequests(requests map[string]string) *ResourceClaimSpecBuilder {
+	if len(b.spec.Devices.Requests) > 0 {
+		lastIdx := len(b.spec.Devices.Requests) - 1
+		if b.spec.Devices.Requests[lastIdx].Exactly != nil {
+			reqs := make(map[resourcev1.QualifiedName]resource.Quantity, len(requests))
+			for k, v := range requests {
+				reqs[resourcev1.QualifiedName(k)] = resource.MustParse(v)
+			}
+			b.spec.Devices.Requests[lastIdx].Exactly.Capacity = &resourcev1.CapacityRequirements{
+				Requests: reqs,
+			}
+		}
+	}
+	return b
+}
+
 // WithDeviceConstraints adds device constraints to the spec
 func (b *ResourceClaimSpecBuilder) WithDeviceConstraints(requestNames []string, matchAttribute string) *ResourceClaimSpecBuilder {
 	constraint := resourcev1.DeviceConstraint{
@@ -573,6 +599,14 @@ func (r *ResourceClaimTemplateWrapper) WithAdminAccess(enabled bool) *ResourceCl
 	builder := NewResourceClaimSpecBuilder()
 	builder.spec = r.Spec.Spec
 	builder.WithAdminAccess(enabled)
+	r.Spec.Spec = builder.Build()
+	return r
+}
+
+func (r *ResourceClaimTemplateWrapper) WithCapacityRequests(requests map[string]string) *ResourceClaimTemplateWrapper {
+	builder := NewResourceClaimSpecBuilder()
+	builder.spec = r.Spec.Spec
+	builder.WithCapacityRequests(requests)
 	r.Spec.Spec = builder.Build()
 	return r
 }
@@ -884,6 +918,28 @@ func (w *ResourceSliceWrapper) CounterConsumption(counterSet, counterName, value
 			CounterSet: counterSet,
 			Counters:   map[string]resourcev1.Counter{counterName: {Value: resource.MustParse(value)}},
 		})
+	}
+	return w
+}
+
+func (w *ResourceSliceWrapper) DeviceCapacity(name, value string, policy *resourcev1.CapacityRequestPolicy) *ResourceSliceWrapper {
+	if len(w.Spec.Devices) > 0 {
+		last := &w.Spec.Devices[len(w.Spec.Devices)-1]
+		if last.Capacity == nil {
+			last.Capacity = make(map[resourcev1.QualifiedName]resourcev1.DeviceCapacity)
+		}
+		last.Capacity[resourcev1.QualifiedName(name)] = resourcev1.DeviceCapacity{
+			Value:         resource.MustParse(value),
+			RequestPolicy: policy,
+		}
+	}
+	return w
+}
+
+func (w *ResourceSliceWrapper) AllowMultipleAllocations(allow bool) *ResourceSliceWrapper {
+	if len(w.Spec.Devices) > 0 {
+		last := &w.Spec.Devices[len(w.Spec.Devices)-1]
+		last.AllowMultipleAllocations = &allow
 	}
 	return w
 }

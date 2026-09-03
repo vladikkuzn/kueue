@@ -20,8 +20,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	visibility "sigs.k8s.io/kueue/apis/visibility/v1beta2"
+	"sigs.k8s.io/kueue/pkg/constants"
+	"sigs.k8s.io/kueue/pkg/util/priority"
 	"sigs.k8s.io/kueue/pkg/workload"
 )
+
+func boundedLimitOffset(limit, offset int64) (int64, int64) {
+	limit = max(limit, 0)
+	limit = min(limit, constants.MaxPendingWorkloadsLimit)
+	offset = max(offset, 0)
+	return limit, offset
+}
 
 func newPendingWorkload(wlInfo *workload.Info, positionInLq int32, positionInCq int) *visibility.PendingWorkload {
 	ownerReferences := make([]metav1.OwnerReference, 0, len(wlInfo.Obj.OwnerReferences))
@@ -41,7 +50,7 @@ func newPendingWorkload(wlInfo *workload.Info, positionInLq int32, positionInCq 
 			CreationTimestamp: wlInfo.Obj.CreationTimestamp,
 		},
 		PositionInClusterQueue: int32(positionInCq),
-		Priority:               *wlInfo.Obj.Spec.Priority,
+		Priority:               priority.Priority(wlInfo.Obj),
 		LocalQueueName:         wlInfo.Obj.Spec.QueueName,
 		PositionInLocalQueue:   positionInLq,
 	}

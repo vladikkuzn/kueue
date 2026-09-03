@@ -17,9 +17,13 @@ limitations under the License.
 package scheduler
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	corev1 "k8s.io/api/core/v1"
@@ -27,12 +31,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/component-base/featuregate"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/cache/hierarchy"
+	tasindexer "sigs.k8s.io/kueue/pkg/controller/tas/indexer"
+	"sigs.k8s.io/kueue/pkg/features"
 	"sigs.k8s.io/kueue/pkg/resources"
+	"sigs.k8s.io/kueue/pkg/util/resourcegroups"
+	utiltas "sigs.k8s.io/kueue/pkg/util/tas"
 	utiltesting "sigs.k8s.io/kueue/pkg/util/testing"
 	utiltestingapi "sigs.k8s.io/kueue/pkg/util/testing/v1beta2"
+	"sigs.k8s.io/kueue/pkg/util/testingjobs/node"
 	"sigs.k8s.io/kueue/pkg/workload"
 )
 
@@ -42,17 +52,29 @@ var snapCmpOpts = cmp.Options{
 	cmpopts.IgnoreUnexported(hierarchy.ClusterQueue[*CohortSnapshot]{}),
 	cmpopts.IgnoreUnexported(hierarchy.Manager[*ClusterQueueSnapshot, *CohortSnapshot]{}),
 	cmpopts.IgnoreFields(metav1.Condition{}, "LastTransitionTime"),
+	cmpopts.IgnoreFields(Snapshot{}, "SimulatorSnapshot"),
 }
 
 func TestSnapshot(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	testCases := map[string]struct {
-		cqs          []*kueue.ClusterQueue
-		cohorts      []*kueue.Cohort
-		rfs          []*kueue.ResourceFlavor
-		topologies   []*kueue.Topology
-		wls          []*kueue.Workload
-		wantSnapshot Snapshot
+		cqs        []*kueue.ClusterQueue
+		cohorts    []*kueue.Cohort
+		rfs        []*kueue.ResourceFlavor
+		topologies []*kueue.Topology
+		wls        []*kueue.Workload
+		// nodes are synced into the TAS cache before the snapshot.
+		nodes []*corev1.Node
+		// tasFlavorUsage records raw TAS usage on a flavor before the snapshot.
+		tasFlavorUsage map[kueue.ResourceFlavorReference][]workload.TopologyDomainRequests
+		// relabeledFlavors are reapplied after tasFlavorUsage, moving a flavor off
+		// the nodes its usage was recorded on.
+		relabeledFlavors []*kueue.ResourceFlavor
+		wantSnapshot     Snapshot
+		// wantTASUsage asserts per-flavor domain usage (and that none was skipped).
+		wantTASUsage map[kueue.ResourceFlavorReference]map[utiltas.TopologyDomainID]resources.Requests
+		// featureGates set per case before the snapshot is taken.
+		featureGates map[featuregate.Feature]bool
 	}{
 		"empty": {},
 		"independent clusterQueues": {
@@ -238,7 +260,7 @@ func TestSnapshot(t *testing.T) {
 							"a": {
 								Name:                          "a",
 								AllocatableResourceGeneration: 2,
-								ResourceGroups: []ResourceGroup{
+								ResourceGroups: []resourcegroups.ResourceGroup{
 									{
 										CoveredResources: sets.New(corev1.ResourceCPU),
 										Flavors:          []kueue.ResourceFlavorReference{"demand", "spot"},
@@ -278,7 +300,7 @@ func TestSnapshot(t *testing.T) {
 							"b": {
 								Name:                          "b",
 								AllocatableResourceGeneration: 1,
-								ResourceGroups: []ResourceGroup{
+								ResourceGroups: []resourcegroups.ResourceGroup{
 									{
 										CoveredResources: sets.New(corev1.ResourceCPU),
 										Flavors:          []kueue.ResourceFlavorReference{"spot"},
@@ -340,7 +362,7 @@ func TestSnapshot(t *testing.T) {
 							"c": {
 								Name:                          "c",
 								AllocatableResourceGeneration: 1,
-								ResourceGroups: []ResourceGroup{
+								ResourceGroups: []resourcegroups.ResourceGroup{
 									{
 										CoveredResources: sets.New(corev1.ResourceCPU),
 										Flavors:          []kueue.ResourceFlavorReference{"default"},
@@ -498,7 +520,7 @@ func TestSnapshot(t *testing.T) {
 							"a": {
 								Name:                          "a",
 								AllocatableResourceGeneration: 2,
-								ResourceGroups: []ResourceGroup{
+								ResourceGroups: []resourcegroups.ResourceGroup{
 									{
 										CoveredResources: sets.New(corev1.ResourceCPU),
 										Flavors:          []kueue.ResourceFlavorReference{"arm", "x86"},
@@ -559,7 +581,7 @@ func TestSnapshot(t *testing.T) {
 							"b": {
 								Name:                          "b",
 								AllocatableResourceGeneration: 1,
-								ResourceGroups: []ResourceGroup{
+								ResourceGroups: []resourcegroups.ResourceGroup{
 									{
 										CoveredResources: sets.New(corev1.ResourceCPU),
 										Flavors:          []kueue.ResourceFlavorReference{"arm", "x86"},
@@ -640,7 +662,7 @@ func TestSnapshot(t *testing.T) {
 						"cq": {
 							Name:                          "cq",
 							AllocatableResourceGeneration: 2,
-							ResourceGroups: []ResourceGroup{
+							ResourceGroups: []resourcegroups.ResourceGroup{
 								{
 									CoveredResources: sets.New(corev1.ResourceCPU),
 									Flavors:          []kueue.ResourceFlavorReference{"arm", "x86"},
@@ -720,7 +742,7 @@ func TestSnapshot(t *testing.T) {
 						"cq-nocycle": {
 							Name:                          "cq-nocycle",
 							AllocatableResourceGeneration: 2,
-							ResourceGroups: []ResourceGroup{
+							ResourceGroups: []resourcegroups.ResourceGroup{
 								{
 									CoveredResources: sets.New(corev1.ResourceCPU),
 									Flavors:          []kueue.ResourceFlavorReference{"arm"},
@@ -817,7 +839,7 @@ func TestSnapshot(t *testing.T) {
 						"tas-cq": {
 							Name:                          "tas-cq",
 							AllocatableResourceGeneration: 2,
-							ResourceGroups: []ResourceGroup{
+							ResourceGroups: []resourcegroups.ResourceGroup{
 								{
 									CoveredResources: sets.New(corev1.ResourceCPU),
 									Flavors:          []kueue.ResourceFlavorReference{"tas-flavor"},
@@ -848,10 +870,137 @@ func TestSnapshot(t *testing.T) {
 				},
 			},
 		},
+		// The next three cases exercise how Cache.Snapshot feeds
+		// TASHandleOverlappingFlavors usage into each flavor's snapshot (#10659).
+		"overlapping flavors selecting disjoint nodes take only their own usage": {
+			featureGates: map[featuregate.Feature]bool{features.TopologyAwareScheduling: true, features.TASHandleOverlappingFlavors: true},
+			topologies:   []*kueue.Topology{utiltestingapi.MakeDefaultOneLevelTopology("topology")},
+			rfs: []*kueue.ResourceFlavor{
+				utiltestingapi.MakeResourceFlavor("tas-zone-a").TopologyName("topology").NodeLabel("zone", "a").Obj(),
+				utiltestingapi.MakeResourceFlavor("tas-zone-b").TopologyName("topology").NodeLabel("zone", "b").Obj(),
+			},
+			cqs: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("cq").ResourceGroup(
+					*utiltestingapi.MakeFlavorQuotas("tas-zone-a").Resource(corev1.ResourceCPU, "100").Obj(),
+					*utiltestingapi.MakeFlavorQuotas("tas-zone-b").Resource(corev1.ResourceCPU, "100").Obj(),
+				).Obj(),
+			},
+			nodes: []*corev1.Node{
+				node.MakeNode("x1").Label(corev1.LabelHostname, "x1").Label("zone", "a").
+					StatusAllocatable(corev1.ResourceList{
+						corev1.ResourceCPU:  resource.MustParse("2"),
+						corev1.ResourcePods: resource.MustParse("10"),
+					}).Ready().Obj(),
+				node.MakeNode("x2").Label(corev1.LabelHostname, "x2").Label("zone", "b").
+					StatusAllocatable(corev1.ResourceList{
+						corev1.ResourceCPU:  resource.MustParse("2"),
+						corev1.ResourcePods: resource.MustParse("10"),
+					}).Ready().Obj(),
+			},
+			tasFlavorUsage: map[kueue.ResourceFlavorReference][]workload.TopologyDomainRequests{
+				"tas-zone-a": {{
+					Values:            []string{"x1"},
+					SinglePodRequests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000}),
+					Count:             1,
+				}},
+				"tas-zone-b": {{
+					Values:            []string{"x2"},
+					SinglePodRequests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000}),
+					Count:             1,
+				}},
+			},
+			wantTASUsage: map[kueue.ResourceFlavorReference]map[utiltas.TopologyDomainID]resources.Requests{
+				"tas-zone-a": {"x1": resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000, corev1.ResourcePods: 1})},
+				"tas-zone-b": {"x2": resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000, corev1.ResourcePods: 1})},
+			},
+		},
+		"overlapping flavors differing only in taints share the usage of their node (#10659)": {
+			featureGates: map[featuregate.Feature]bool{features.TopologyAwareScheduling: true, features.TASHandleOverlappingFlavors: true},
+			// Both flavors select x1; counting per-flavor would double-count it.
+			topologies: []*kueue.Topology{utiltestingapi.MakeDefaultOneLevelTopology("topology")},
+			rfs: []*kueue.ResourceFlavor{
+				utiltestingapi.MakeResourceFlavor("tas-shared").TopologyName("topology").NodeLabel("zone", "a").Obj(),
+				utiltestingapi.MakeResourceFlavor("tas-dedicated").TopologyName("topology").NodeLabel("zone", "a").
+					Taint(corev1.Taint{Key: "dedicated", Value: "special", Effect: corev1.TaintEffectNoSchedule}).Obj(),
+			},
+			cqs: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("cq").ResourceGroup(
+					*utiltestingapi.MakeFlavorQuotas("tas-shared").Resource(corev1.ResourceCPU, "100").Obj(),
+					*utiltestingapi.MakeFlavorQuotas("tas-dedicated").Resource(corev1.ResourceCPU, "100").Obj(),
+				).Obj(),
+			},
+			nodes: []*corev1.Node{
+				node.MakeNode("x1").Label(corev1.LabelHostname, "x1").Label("zone", "a").
+					StatusAllocatable(corev1.ResourceList{
+						corev1.ResourceCPU:  resource.MustParse("2"),
+						corev1.ResourcePods: resource.MustParse("10"),
+					}).Ready().Obj(),
+			},
+			tasFlavorUsage: map[kueue.ResourceFlavorReference][]workload.TopologyDomainRequests{
+				"tas-shared": {{
+					Values:            []string{"x1"},
+					SinglePodRequests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000}),
+					Count:             1,
+				}},
+				"tas-dedicated": {{
+					Values:            []string{"x1"},
+					SinglePodRequests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000}),
+					Count:             1,
+				}},
+			},
+			wantTASUsage: map[kueue.ResourceFlavorReference]map[utiltas.TopologyDomainID]resources.Requests{
+				"tas-shared":    {"x1": resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 2000, corev1.ResourcePods: 2})},
+				"tas-dedicated": {"x1": resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 2000, corev1.ResourcePods: 2})},
+			},
+		},
+		"overlapping flavor that moved to other nodes still counts on the node holding its usage": {
+			featureGates: map[featuregate.Feature]bool{features.TopologyAwareScheduling: true, features.TASHandleOverlappingFlavors: true},
+			// tas-moved is relabelled to zone=b after its usage was recorded on
+			// x1; tas-stay still selects x1 and must still count that usage.
+			topologies: []*kueue.Topology{utiltestingapi.MakeDefaultOneLevelTopology("topology")},
+			rfs: []*kueue.ResourceFlavor{
+				utiltestingapi.MakeResourceFlavor("tas-stay").TopologyName("topology").NodeLabel("zone", "a").Obj(),
+				utiltestingapi.MakeResourceFlavor("tas-moved").TopologyName("topology").NodeLabel("zone", "a").Obj(),
+			},
+			cqs: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue("cq").ResourceGroup(
+					*utiltestingapi.MakeFlavorQuotas("tas-stay").Resource(corev1.ResourceCPU, "100").Obj(),
+					*utiltestingapi.MakeFlavorQuotas("tas-moved").Resource(corev1.ResourceCPU, "100").Obj(),
+				).Obj(),
+			},
+			nodes: []*corev1.Node{
+				node.MakeNode("x1").Label(corev1.LabelHostname, "x1").Label("zone", "a").
+					StatusAllocatable(corev1.ResourceList{
+						corev1.ResourceCPU:  resource.MustParse("2"),
+						corev1.ResourcePods: resource.MustParse("10"),
+					}).Ready().Obj(),
+			},
+			tasFlavorUsage: map[kueue.ResourceFlavorReference][]workload.TopologyDomainRequests{
+				"tas-stay": {{
+					Values:            []string{"x1"},
+					SinglePodRequests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000}),
+					Count:             1,
+				}},
+				"tas-moved": {{
+					Values:            []string{"x1"},
+					SinglePodRequests: resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 1000}),
+					Count:             1,
+				}},
+			},
+			relabeledFlavors: []*kueue.ResourceFlavor{
+				utiltestingapi.MakeResourceFlavor("tas-moved").TopologyName("topology").NodeLabel("zone", "b").Obj(),
+			},
+			wantTASUsage: map[kueue.ResourceFlavorReference]map[utiltas.TopologyDomainID]resources.Requests{
+				"tas-stay": {"x1": resources.NewRequestsFromMap(map[corev1.ResourceName]int64{corev1.ResourceCPU: 2000, corev1.ResourcePods: 2})},
+				// tas-moved has no leaf now, so it accounts nothing.
+				"tas-moved": {},
+			},
+		},
 	}
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
+			features.SetFeatureGatesDuringTest(t, tc.featureGates)
 			ctx, log := utiltesting.ContextWithLog(t)
 			cache := New(utiltesting.NewFakeClient())
 			for _, cq := range tc.cqs {
@@ -873,13 +1022,77 @@ func TestSnapshot(t *testing.T) {
 			for _, wl := range tc.wls {
 				cache.AddOrUpdateWorkload(log, wl)
 			}
-			snapshot, err := cache.Snapshot(ctx)
+			for _, n := range tc.nodes {
+				cache.TASCache().SyncNode(n)
+			}
+			for flavor, usage := range tc.tasFlavorUsage {
+				flavorCache := cache.TASCache().Get(flavor)
+				if flavorCache == nil {
+					t.Fatalf("TAS flavor cache for %q was not created", flavor)
+				}
+				flavorCache.addUsage(log, workload.Reference("default/"+string(flavor)), usage)
+			}
+			// Reapplying a flavor after its usage was recorded moves it onto
+			// other nodes while the usage stays on the node it left.
+			for _, rf := range tc.relabeledFlavors {
+				cache.AddOrUpdateResourceFlavor(log, rf)
+			}
+
+			// A domain of a node a flavor does not select carries no usage it can
+			// account, so Cache.Snapshot must skip it without logging a line per
+			// such domain.
+			var skippedDomains []utiltas.TopologyDomainID
+			snapshotCtx := ctx
+			if tc.wantTASUsage != nil {
+				capturingLog := funcr.NewJSON(func(obj string) {
+					entry := make(map[string]any)
+					if err := json.Unmarshal([]byte(obj), &entry); err != nil {
+						t.Errorf("Failed to parse log entry %q: %v", obj, err)
+						return
+					}
+					if entry["msg"] == "skip accounting for TAS usage in domain" {
+						skippedDomains = append(skippedDomains, utiltas.TopologyDomainID(fmt.Sprint(entry["domain"])))
+					}
+				}, funcr.Options{Verbosity: 3})
+				snapshotCtx = logr.NewContext(ctx, capturingLog)
+			}
+			snapshot, err := cache.Snapshot(snapshotCtx)
 			if err != nil {
 				t.Fatalf("unexpected error while building snapshot: %v", err)
 			}
-			if diff := cmp.Diff(tc.wantSnapshot, *snapshot, snapCmpOpts...); len(diff) != 0 {
+
+			if tc.wantTASUsage != nil {
+				if len(skippedDomains) > 0 {
+					t.Errorf("Snapshot reported skipped TAS usage for domains %v, want none", skippedDomains)
+				}
+				cqName := kueue.ClusterQueueReference(tc.cqs[0].Name)
+				cqSnapshot := snapshot.ClusterQueue(cqName)
+				if cqSnapshot == nil {
+					t.Fatalf("ClusterQueue %q is missing from the snapshot", cqName)
+				}
+				gotTASUsage := make(map[kueue.ResourceFlavorReference]map[utiltas.TopologyDomainID]resources.Requests, len(tc.wantTASUsage))
+				for flavor := range tc.wantTASUsage {
+					flavorSnapshot := cqSnapshot.TASFlavors[flavor]
+					if flavorSnapshot == nil {
+						t.Fatalf("flavor %q is missing from the ClusterQueue snapshot", flavor)
+					}
+					// A leaf's usage is nil until first updated; skip those.
+					domainUsage := make(map[utiltas.TopologyDomainID]resources.Requests)
+					for domainID, leaf := range flavorSnapshot.leaves {
+						if leafCapacity := flavorSnapshot.leafCapacityOf(leaf); leafCapacity.tasUsage != nil {
+							domainUsage[domainID] = leafCapacity.tasUsage
+						}
+					}
+					gotTASUsage[flavor] = domainUsage
+				}
+				usageCmpOpts := cmp.Options{cmp.Comparer(resources.Equal)}
+				if diff := cmp.Diff(tc.wantTASUsage, gotTASUsage, usageCmpOpts...); diff != "" {
+					t.Errorf("unexpected TAS usage in the flavor snapshots (-want,+got):\n%s", diff)
+				}
+			} else if diff := cmp.Diff(tc.wantSnapshot, *snapshot, snapCmpOpts...); len(diff) != 0 {
 				t.Errorf("Unexpected Snapshot (-want,+got):\n%s", diff)
 			}
+
 			for _, cq := range snapshot.ClusterQueues() {
 				for i := range cq.ResourceGroups {
 					rg := &cq.ResourceGroups[i]
@@ -889,6 +1102,100 @@ func TestSnapshot(t *testing.T) {
 						}
 					}
 				}
+			}
+		})
+	}
+}
+
+// TestSnapshotLog is a sanity check for logging the snapshot, which the
+// scheduler does on every scheduling cycle when running with high verbosity.
+func TestSnapshotLog(t *testing.T) {
+	testCases := map[string]struct {
+		nodes []*corev1.Node
+		// wantFreeCapacityPerDomain holds one entry per logged "TAS Snapshot
+		// Free Capacity" line, so a case can also assert that nothing is logged.
+		wantFreeCapacityPerDomain []any
+	}{
+		"domain with capacity, but no admitted TAS workloads": {
+			nodes: []*corev1.Node{
+				node.MakeNode("node-a").
+					Label(corev1.LabelHostname, "node-a").
+					StatusAllocatable(corev1.ResourceList{
+						corev1.ResourceCPU:  resource.MustParse("2"),
+						corev1.ResourcePods: resource.MustParse("10"),
+					}).
+					Ready().
+					Obj(),
+			},
+			wantFreeCapacityPerDomain: []any{`{"node-a":{"freeCapacity":{"cpu":"2","pods":"10"},"tasUsage":{}}}`},
+		},
+		"multiple domains are reported in a stable order": {
+			nodes: []*corev1.Node{
+				node.MakeNode("node-b").
+					Label(corev1.LabelHostname, "node-b").
+					StatusAllocatable(corev1.ResourceList{
+						corev1.ResourceCPU:  resource.MustParse("1"),
+						corev1.ResourcePods: resource.MustParse("5"),
+					}).
+					Ready().
+					Obj(),
+				node.MakeNode("node-a").
+					Label(corev1.LabelHostname, "node-a").
+					StatusAllocatable(corev1.ResourceList{
+						corev1.ResourceCPU:  resource.MustParse("2"),
+						corev1.ResourcePods: resource.MustParse("10"),
+					}).
+					Ready().
+					Obj(),
+			},
+			wantFreeCapacityPerDomain: []any{`{"node-a":{"freeCapacity":{"cpu":"2","pods":"10"},"tasUsage":{}},"node-b":{"freeCapacity":{"cpu":"1","pods":"5"},"tasUsage":{}}}`},
+		},
+	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx, log := utiltesting.ContextWithLog(t)
+
+			clientBuilder := utiltesting.NewClientBuilder()
+			_ = tasindexer.SetupIndexes(ctx, utiltesting.AsIndexer(clientBuilder))
+			cache := New(clientBuilder.Build())
+
+			cache.AddOrUpdateResourceFlavor(log, utiltestingapi.MakeResourceFlavor("tas-flavor").TopologyName("topology").Obj())
+			cache.AddOrUpdateTopology(log, utiltestingapi.MakeDefaultOneLevelTopology("topology"))
+			cq := utiltestingapi.MakeClusterQueue("tas-cq").
+				ResourceGroup(*utiltestingapi.MakeFlavorQuotas("tas-flavor").Resource(corev1.ResourceCPU, "10").Obj()).
+				Obj()
+			if err := cache.AddClusterQueue(ctx, cq); err != nil {
+				t.Fatalf("Failed adding ClusterQueue: %v", err)
+			}
+			for _, n := range tc.nodes {
+				cache.TASCache().SyncNode(n)
+			}
+
+			snapshot, err := cache.Snapshot(ctx)
+			if err != nil {
+				t.Fatalf("Failed building snapshot: %v", err)
+			}
+
+			var entries []map[string]any
+			capturingLog := funcr.NewJSON(func(obj string) {
+				entry := make(map[string]any)
+				if err := json.Unmarshal([]byte(obj), &entry); err != nil {
+					t.Errorf("Failed to parse log entry %q: %v", obj, err)
+					return
+				}
+				entries = append(entries, entry)
+			}, funcr.Options{})
+
+			snapshot.Log(capturingLog)
+
+			var gotFreeCapacityPerDomain []any
+			for _, entry := range entries {
+				if entry["msg"] == "TAS Snapshot Free Capacity" {
+					gotFreeCapacityPerDomain = append(gotFreeCapacityPerDomain, entry["freeCapacityPerDomain"])
+				}
+			}
+			if diff := cmp.Diff(tc.wantFreeCapacityPerDomain, gotFreeCapacityPerDomain); diff != "" {
+				t.Errorf("Unexpected logged TAS free capacity (-want,+got):\n%s", diff)
 			}
 		})
 	}
@@ -1190,7 +1497,7 @@ func TestSnapshotAddRemoveWorkload(t *testing.T) {
 	cmpOpts := append(snapCmpOpts,
 		cmpopts.IgnoreFields(ClusterQueueSnapshot{}, "NamespaceSelector", "Preemption", "Status", "AllocatableResourceGeneration"),
 		cmpopts.IgnoreFields(resourceNode{}, "Quotas"),
-		cmpopts.IgnoreFields(Snapshot{}, "ResourceFlavors"),
+		cmpopts.IgnoreFields(Snapshot{}, "ResourceFlavors", "SimulatorSnapshot"),
 		cmpopts.IgnoreTypes(&workload.Info{}))
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1689,7 +1996,7 @@ func TestSnapshotAddRemoveWorkloadWithLendingLimit(t *testing.T) {
 	cmpOpts := append(snapCmpOpts,
 		cmpopts.IgnoreFields(ClusterQueueSnapshot{}, "NamespaceSelector", "Preemption", "Status", "AllocatableResourceGeneration"),
 		cmpopts.IgnoreFields(resourceNode{}, "Quotas"),
-		cmpopts.IgnoreFields(Snapshot{}, "ResourceFlavors"),
+		cmpopts.IgnoreFields(Snapshot{}, "ResourceFlavors", "SimulatorSnapshot"),
 		cmpopts.IgnoreTypes(&workload.Info{}))
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

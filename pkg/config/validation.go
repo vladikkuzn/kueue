@@ -18,12 +18,14 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"regexp"
 	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/validate/content"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,7 +38,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	"k8s.io/component-base/featuregate"
 	dracel "k8s.io/dynamic-resource-allocation/cel"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -45,9 +46,16 @@ import (
 	"sigs.k8s.io/kueue/pkg/controller/jobframework"
 	podworkload "sigs.k8s.io/kueue/pkg/controller/jobs/pod"
 	"sigs.k8s.io/kueue/pkg/features"
+	"sigs.k8s.io/kueue/pkg/metrics"
 	stringsutils "sigs.k8s.io/kueue/pkg/util/strings"
 	"sigs.k8s.io/kueue/pkg/util/tlsconfig"
 	"sigs.k8s.io/kueue/pkg/util/waitforpodsready"
+)
+
+const (
+	maxCustomLabels               = 20
+	maxTrackedCustomLabelValues   = 16
+	maxTrackedWlCustomLabelValues = 12
 )
 
 var (
@@ -55,6 +63,7 @@ var (
 	integrationsFrameworksPath            = integrationsPath.Child("frameworks")
 	integrationsExternalFrameworkPath     = integrationsPath.Child("externalFrameworks")
 	managedJobsNamespaceSelectorPath      = field.NewPath("managedJobsNamespaceSelector")
+	quotaReleaseStrategyPath              = field.NewPath("quotaReleaseStrategy")
 	waitForPodsReadyPath                  = field.NewPath("waitForPodsReady")
 	requeuingStrategyPath                 = waitForPodsReadyPath.Child("requeuingStrategy")
 	multiKueuePath                        = field.NewPath("multiKueue")
@@ -74,14 +83,21 @@ var (
 	visibilityServerBindPortPath          = field.NewPath("visibilityServer", "bindPort")
 	customLabelsPath                      = field.NewPath("metrics", "customLabels")
 	resourceQuotaCheckStrategyPath        = field.NewPath("resources", "quotaCheckStrategy")
+	// Values in this map should never exceed metrics.MaxCustomLabelsForSourceKind.
+	maxCustomLabelsPerSourceKind = map[configapi.SourceKind]int{
+		configapi.SourceKindWorkload:     min(2, metrics.MaxCustomLabelsForSourceKind),
+		configapi.SourceKindLocalQueue:   metrics.MaxCustomLabelsForSourceKind,
+		configapi.SourceKindClusterQueue: metrics.MaxCustomLabelsForSourceKind,
+		configapi.SourceKindCohort:       metrics.MaxCustomLabelsForSourceKind,
+	}
 )
 
 // Validate checks the configuration for invalid values.
-func Validate(c *configapi.Configuration, scheme *runtime.Scheme) field.ErrorList {
+func Validate(c *configapi.Configuration, scheme *runtime.Scheme, integrationManager *jobframework.IntegrationManager) field.ErrorList {
 	var allErrs field.ErrorList
 	allErrs = append(allErrs, validateWaitForPodsReady(c)...)
-	allErrs = append(allErrs, validateIntegrations(c, scheme)...)
-	allErrs = append(allErrs, validateMultiKueue(c)...)
+	allErrs = append(allErrs, validateIntegrations(c, scheme, integrationManager)...)
+	allErrs = append(allErrs, validateMultiKueue(c, integrationManager)...)
 	allErrs = append(allErrs, validateFairSharing(c)...)
 	allErrs = append(allErrs, validateAdmissionFairSharing(c)...)
 	allErrs = append(allErrs, validateInternalCertManagement(c)...)
@@ -93,8 +109,7 @@ func Validate(c *configapi.Configuration, scheme *runtime.Scheme) field.ErrorLis
 	allErrs = append(allErrs, validateVisibilityServer(c)...)
 	allErrs = append(allErrs, validateCustomLabels(c)...)
 	allErrs = append(allErrs, validateQuotaCheckStrategy(c)...)
-	allErrs = append(allErrs, validateDRAFeatureGateDependencies()...)
-	allErrs = append(allErrs, validateFeatureGateDependency(features.UnadmittedWorkloadsExplicitStatus, features.UnadmittedWorkloadsObservability)...)
+	allErrs = append(allErrs, validateQuotaReleaseStrategy(c)...)
 	return allErrs
 }
 
@@ -126,6 +141,24 @@ func validateQuotaCheckStrategy(c *configapi.Configuration) field.ErrorList {
 	return allErrs
 }
 
+func validateQuotaReleaseStrategy(c *configapi.Configuration) field.ErrorList {
+	var allErrs field.ErrorList
+	if c.QuotaReleaseStrategy != nil {
+		strategy := *c.QuotaReleaseStrategy
+		if strategy != configapi.QuotaReleaseOnTerminating && strategy != configapi.QuotaReleaseOnTerminal {
+			allErrs = append(allErrs, field.NotSupported(
+				quotaReleaseStrategyPath,
+				strategy,
+				[]configapi.QuotaReleaseStrategy{
+					configapi.QuotaReleaseOnTerminating,
+					configapi.QuotaReleaseOnTerminal,
+				},
+			))
+		}
+	}
+	return allErrs
+}
+
 func validateInternalCertManagement(c *configapi.Configuration) field.ErrorList {
 	var allErrs field.ErrorList
 	if c.InternalCertManagement == nil || !ptr.Deref(c.InternalCertManagement.Enable, false) {
@@ -144,7 +177,7 @@ func validateInternalCertManagement(c *configapi.Configuration) field.ErrorList 
 	return allErrs
 }
 
-func validateMultiKueue(c *configapi.Configuration) field.ErrorList {
+func validateMultiKueue(c *configapi.Configuration, integrationManager *jobframework.IntegrationManager) field.ErrorList {
 	var allErrs field.ErrorList
 	if c.MultiKueue != nil {
 		if c.MultiKueue.GCInterval != nil && c.MultiKueue.GCInterval.Duration < 0 {
@@ -168,7 +201,7 @@ func validateMultiKueue(c *configapi.Configuration) field.ErrorList {
 				enabledIntegrations = sets.New(c.Integrations.Frameworks...)
 			}
 
-			builtInAdapters, err := jobframework.GetMultiKueueAdapters(enabledIntegrations)
+			builtInAdapters, err := integrationManager.GetMultiKueueAdapters(enabledIntegrations)
 			if err != nil {
 				allErrs = append(allErrs, field.InternalError(path, err))
 			}
@@ -198,7 +231,7 @@ func validateMultiKueue(c *configapi.Configuration) field.ErrorList {
 		}
 
 		if cp := c.MultiKueue.ClusterProfile; cp != nil {
-			credentialsProviders := cp.CredentialsProviders //nolint:staticcheck // SA1019: CredentialsProviders is validated for backward compatibility.
+			credentialsProviders := cp.CredentialsProviders
 			if len(cp.AccessProviders) > 0 && len(credentialsProviders) > 0 {
 				allErrs = append(allErrs, field.Forbidden(clusterProfileCredentialProvidersPath, "must not be specified when accessProviders is specified"))
 			}
@@ -299,7 +332,7 @@ func validateWaitForPodsReady(c *configapi.Configuration) field.ErrorList {
 	return allErrs
 }
 
-func validateIntegrations(c *configapi.Configuration, scheme *runtime.Scheme) field.ErrorList {
+func validateIntegrations(c *configapi.Configuration, scheme *runtime.Scheme, integrationManager *jobframework.IntegrationManager) field.ErrorList {
 	var allErrs field.ErrorList
 	if c.Integrations == nil {
 		return field.ErrorList{field.Required(integrationsPath, "cannot be empty")}
@@ -309,9 +342,9 @@ func validateIntegrations(c *configapi.Configuration, scheme *runtime.Scheme) fi
 	}
 
 	managedFrameworks := sets.New[string]()
-	availableBuiltInFrameworks := jobframework.GetIntegrationsList()
+	availableBuiltInFrameworks := integrationManager.GetIntegrationsList()
 	for idx, framework := range c.Integrations.Frameworks {
-		if cb, found := jobframework.GetIntegration(framework); !found {
+		if cb, found := integrationManager.GetIntegration(framework); !found {
 			allErrs = append(allErrs, field.NotSupported(integrationsFrameworksPath.Index(idx), framework, availableBuiltInFrameworks))
 		} else if gvk, err := apiutil.GVKForObject(cb.JobType, scheme); err == nil {
 			if managedFrameworks.Has(gvk.String()) {
@@ -442,6 +475,9 @@ func validateAdmissionFairSharing(c *configapi.Configuration) field.ErrorList {
 	return allErrs
 }
 
+// reservedResourceNameMsg repeats the Workload webhook's wording for the same refusal; the two are not linked.
+const reservedResourceNameMsg = "the key is reserved for internal kueue use"
+
 func validateResourceTransformations(c *configapi.Configuration) field.ErrorList {
 	res := c.Resources
 	if res == nil {
@@ -449,6 +485,7 @@ func validateResourceTransformations(c *configapi.Configuration) field.ErrorList
 	}
 	var allErrs field.ErrorList
 	seenKeys := make(sets.Set[corev1.ResourceName])
+	refuseReserved := features.Enabled(features.ReservedResourceNameValidation)
 	for idx, transform := range res.Transformations {
 		strategy := ptr.Deref(transform.Strategy, "")
 		if strategy != configapi.Retain && strategy != configapi.Replace {
@@ -459,6 +496,26 @@ func validateResourceTransformations(c *configapi.Configuration) field.ErrorList
 			allErrs = append(allErrs, field.Duplicate(resourceTransformationPath.Index(idx).Child("input"), transform.Input))
 		} else {
 			seenKeys.Insert(transform.Input)
+		}
+		// pods is reserved for the request Kueue synthesizes from the PodSet
+		// count, so a transformation must not name it in any position. Gated
+		// because the refusal exits the manager on a file that used to load.
+		if refuseReserved {
+			if transform.Input == corev1.ResourcePods {
+				allErrs = append(allErrs, field.Invalid(
+					resourceTransformationPath.Index(idx).Child("input"),
+					transform.Input, reservedResourceNameMsg))
+			}
+			if _, ok := transform.Outputs[corev1.ResourcePods]; ok {
+				allErrs = append(allErrs, field.Invalid(
+					resourceTransformationPath.Index(idx).Child("outputs").Key(string(corev1.ResourcePods)),
+					corev1.ResourcePods, reservedResourceNameMsg))
+			}
+			if transform.MultiplyBy == corev1.ResourcePods {
+				allErrs = append(allErrs, field.Invalid(
+					resourceTransformationPath.Index(idx).Child("multiplyBy"),
+					transform.MultiplyBy, reservedResourceNameMsg))
+			}
 		}
 	}
 	return allErrs
@@ -476,8 +533,10 @@ func validateDeviceClassMappings(c *configapi.Configuration) field.ErrorList {
 		allErrs = append(allErrs, field.TooMany(dynamicResourceAllocationPath, len(mappings), 16))
 	}
 
+	refuseReserved := features.Enabled(features.ReservedResourceNameValidation)
 	seenResourceNames := make(sets.Set[corev1.ResourceName])
 	deviceClassToResource := make(map[corev1.ResourceName]corev1.ResourceName)
+	deviceClassCounterNames := make(map[corev1.ResourceName]sets.Set[string])
 
 	for idx, mapping := range mappings {
 		mappingPath := dynamicResourceAllocationPath.Index(idx)
@@ -488,6 +547,13 @@ func validateDeviceClassMappings(c *configapi.Configuration) field.ErrorList {
 
 		if len(string(mapping.Name)) > 253 {
 			allErrs = append(allErrs, field.Invalid(mappingPath.Child("name"), mapping.Name, "must not exceed 253 characters"))
+		}
+
+		// pods is reserved for the request Kueue synthesizes from the PodSet count.
+		// The mapper is only built with DRA on, so until then the name is dormant
+		// and refusing it would fail an upgrade over an entry that does nothing.
+		if refuseReserved && features.Enabled(features.KueueDRAIntegration) && mapping.Name == corev1.ResourcePods {
+			allErrs = append(allErrs, field.Invalid(mappingPath.Child("name"), mapping.Name, reservedResourceNameMsg))
 		}
 
 		if seenResourceNames.Has(mapping.Name) {
@@ -524,57 +590,78 @@ func validateDeviceClassMappings(c *configapi.Configuration) field.ErrorList {
 				seenDeviceClassNames.Insert(deviceClass)
 			}
 
+			counterName := counterNameForMapping(mapping)
 			if existingResource, exists := deviceClassToResource[deviceClass]; exists {
 				if existingResource != mapping.Name {
-					allErrs = append(allErrs, field.Invalid(dcPath, deviceClass,
-						fmt.Sprintf("device class already mapped to resource %s", existingResource)))
+					// Allow same DeviceClass in multiple mappings only when both have
+					// counter sources with different counter names — each mapping tracks
+					// a different counter dimension (e.g., gpu.memory and gpu.compute).
+					existingCounters := deviceClassCounterNames[deviceClass]
+					switch {
+					case counterName == "" || existingCounters.Len() == 0:
+						allErrs = append(allErrs, field.Invalid(dcPath, deviceClass,
+							fmt.Sprintf("device class already mapped to resource %s", existingResource)))
+					case existingCounters.Has(counterName):
+						allErrs = append(allErrs, field.Invalid(dcPath, deviceClass,
+							fmt.Sprintf("device class already has a counter source for counter %q", counterName)))
+					default:
+						deviceClassCounterNames[deviceClass].Insert(counterName)
+					}
 				}
 			} else {
 				deviceClassToResource[deviceClass] = mapping.Name
+				deviceClassCounterNames[deviceClass] = sets.New[string]()
+				if counterName != "" {
+					deviceClassCounterNames[deviceClass].Insert(counterName)
+				}
 			}
 		}
 
 		if len(mapping.Sources) > 0 {
 			sourcesPath := mappingPath.Child("sources")
-			if !features.Enabled(features.KueueDRAIntegrationPartitionableDevices) {
-				allErrs = append(allErrs, field.Invalid(sourcesPath, len(mapping.Sources),
-					"sources require KueueDRAIntegrationPartitionableDevices to be enabled"))
-			} else {
-				if len(mapping.Sources) > 1 {
-					allErrs = append(allErrs, field.TooMany(sourcesPath, len(mapping.Sources), 1))
+			celCache := dracel.NewCache(len(mapping.Sources), dracel.Features{})
+			counterCount := 0
+			hasCapacity := false
+			for sIdx, source := range mapping.Sources {
+				sourcePath := sourcesPath.Index(sIdx)
+				if source.Counter == nil && source.Capacity == nil {
+					allErrs = append(allErrs, field.Required(sourcePath, "exactly one source type must be set per entry"))
+					continue
 				}
-				celCache := dracel.NewCache(len(mapping.Sources), dracel.Features{})
-				for sIdx, source := range mapping.Sources {
-					sourcePath := sourcesPath.Index(sIdx)
-					if source.Counter == nil {
-						allErrs = append(allErrs, field.Required(sourcePath.Child("counter"), "exactly one source type must be set"))
+				if source.Counter != nil && source.Capacity != nil {
+					allErrs = append(allErrs, field.Invalid(sourcePath, "counter+capacity", "exactly one source type must be set per entry"))
+					continue
+				}
+				if source.Counter != nil {
+					counterCount++
+					if !features.Enabled(features.KueueDRAIntegrationPartitionableDevices) {
+						allErrs = append(allErrs, field.Invalid(sourcePath.Child("counter"), true,
+							"counter sources require KueueDRAIntegrationPartitionableDevices to be enabled"))
 						continue
 					}
 					counterPath := sourcePath.Child("counter")
 					if source.Counter.Name == "" {
 						allErrs = append(allErrs, field.Required(counterPath.Child("name"), ""))
-					} else if len(source.Counter.Name) > 63 {
-						allErrs = append(allErrs, field.Invalid(counterPath.Child("name"), source.Counter.Name, "must not exceed 63 characters"))
+					} else if errs := apimachineryutilvalidation.IsDNS1123Label(source.Counter.Name); len(errs) != 0 {
+						allErrs = append(allErrs, field.Invalid(counterPath.Child("name"), source.Counter.Name, strings.Join(errs, ",")))
 					}
-					if source.Counter.Driver == "" {
-						allErrs = append(allErrs, field.Required(counterPath.Child("driver"), ""))
-					} else if len(source.Counter.Driver) > 253 {
-						allErrs = append(allErrs, field.Invalid(counterPath.Child("driver"), source.Counter.Driver, "must not exceed 253 characters"))
-					}
-					selectorPath := counterPath.Child("deviceSelector", "cel", "expression")
-					if source.Counter.DeviceSelector.CEL == nil || source.Counter.DeviceSelector.CEL.Expression == "" {
-						allErrs = append(allErrs, field.Required(selectorPath, ""))
-					} else {
-						result := celCache.GetOrCompile(source.Counter.DeviceSelector.CEL.Expression)
-						if result.Error != nil {
-							allErrs = append(allErrs, field.Invalid(
-								selectorPath,
-								source.Counter.DeviceSelector.CEL.Expression,
-								fmt.Sprintf("CEL compilation failed: %v", result.Error),
-							))
-						}
-					}
+					allErrs = append(allErrs, validateDeviceClassSource(source.Counter.Driver, &source.Counter.DeviceSelector, counterPath, celCache)...)
 				}
+				if source.Capacity != nil {
+					hasCapacity = true
+					if !features.Enabled(features.KueueDRAIntegrationConsumableCapacity) {
+						allErrs = append(allErrs, field.Invalid(sourcePath.Child("capacity"), true,
+							"capacity sources require KueueDRAIntegrationConsumableCapacity to be enabled"))
+						continue
+					}
+					capacityPath := sourcePath.Child("capacity")
+					allErrs = append(allErrs, validateQualifiedName(source.Capacity.Name, capacityPath.Child("name"))...)
+					allErrs = append(allErrs, validateDeviceClassSource(source.Capacity.Driver, &source.Capacity.DeviceSelector, capacityPath, celCache)...)
+				}
+			}
+			if counterCount > 0 && hasCapacity {
+				allErrs = append(allErrs, field.Invalid(sourcesPath, len(mapping.Sources),
+					"cannot mix counter and capacity sources in the same mapping"))
 			}
 		}
 	}
@@ -608,6 +695,12 @@ func validateManagedJobsNamespaceSelector(c *configapi.Configuration) field.Erro
 }
 
 func LoadAndValidateFeatureGates(featureGateCLI string, featureGateMap map[string]bool) field.ErrorList {
+	var allErrs field.ErrorList
+	if featureGateCLI != "" && featureGateMap != nil {
+		allErrs = append(allErrs, field.Invalid(featureGatesPath, featureGateMap, "feature gates for CLI and configuration cannot both specified"))
+		return allErrs
+	}
+
 	if featureGateCLI != "" {
 		if err := utilfeature.DefaultMutableFeatureGate.Set(featureGateCLI); err != nil {
 			return field.ErrorList{field.Invalid(featureGatesPath, featureGateCLI, err.Error())}
@@ -617,10 +710,7 @@ func LoadAndValidateFeatureGates(featureGateCLI string, featureGateMap map[strin
 			return field.ErrorList{field.Invalid(featureGatesPath, featureGateMap, err.Error())}
 		}
 	}
-	var allErrs field.ErrorList
-	if featureGateCLI != "" && featureGateMap != nil {
-		allErrs = append(allErrs, field.Invalid(featureGatesPath, featureGateMap, "feature gates for CLI and configuration cannot both specified"))
-	}
+
 	TASProfilesEnabled := []bool{features.Enabled(features.TASProfileMixed)}
 	enabledProfilesCount := 0
 	for _, enabled := range TASProfilesEnabled {
@@ -634,70 +724,6 @@ func LoadAndValidateFeatureGates(featureGateCLI string, featureGateMap map[strin
 	}
 	if !features.Enabled(features.TopologyAwareScheduling) && enabledProfilesCount > 0 {
 		allErrs = append(allErrs, field.Invalid(featureGatesPath, enabledProfilesCount, "cannot use a TAS profile with TAS disabled"))
-	}
-	if !features.Enabled(features.TopologyAwareScheduling) && features.Enabled(features.TASHandleOverlappingFlavors) {
-		allErrs = append(allErrs, field.Invalid(featureGatesPath, features.TASHandleOverlappingFlavors,
-			fmt.Sprintf("%s requires %s to be enabled", features.TASHandleOverlappingFlavors, features.TopologyAwareScheduling)))
-	}
-
-	// TAS sub-features have no effect unless their dependencies are also enabled. All of them
-	// require TopologyAwareScheduling; TASFailedNodeReplacementFailFast and
-	// TASReplaceNodeOnPodTermination additionally require TASFailedNodeReplacement.
-	allErrs = append(allErrs, validateFeatureGateDependency(features.TASFailedNodeReplacement, features.TopologyAwareScheduling)...)
-	allErrs = append(allErrs, validateFeatureGateDependency(features.TASFailedNodeReplacementFailFast, features.TopologyAwareScheduling, features.TASFailedNodeReplacement)...)
-	allErrs = append(allErrs, validateFeatureGateDependency(features.TASReplaceNodeOnPodTermination, features.TopologyAwareScheduling, features.TASFailedNodeReplacement)...)
-	allErrs = append(allErrs, validateFeatureGateDependency(features.TASBalancedPlacement, features.TopologyAwareScheduling)...)
-	allErrs = append(allErrs, validateFeatureGateDependency(features.TASReplaceNodeOnNodeTaints, features.TopologyAwareScheduling)...)
-	allErrs = append(allErrs, validateFeatureGateDependency(features.TASMultiLayerTopology, features.TopologyAwareScheduling)...)
-	allErrs = append(allErrs, validateFeatureGateDependency(features.TASRespectNodeAffinityPreferred, features.TopologyAwareScheduling)...)
-	allErrs = append(allErrs, validateFeatureGateDependency(features.UnadmittedWorkloadsExplicitStatus, features.UnadmittedWorkloadsObservability)...)
-
-	if features.Enabled(features.ElasticJobsViaWorkloadSlicesWithTAS) {
-		if !features.Enabled(features.ElasticJobsViaWorkloadSlices) {
-			allErrs = append(allErrs, field.Invalid(featureGatesPath, "ElasticJobsViaWorkloadSlicesWithTAS", "ElasticJobsViaWorkloadSlicesWithTAS requires ElasticJobsViaWorkloadSlices to be enabled"))
-		}
-		if !features.Enabled(features.TopologyAwareScheduling) {
-			allErrs = append(allErrs, field.Invalid(featureGatesPath, "ElasticJobsViaWorkloadSlicesWithTAS", "ElasticJobsViaWorkloadSlicesWithTAS requires TopologyAwareScheduling to be enabled"))
-		}
-	}
-
-	allErrs = append(allErrs, validateDRAFeatureGateDependencies()...)
-
-	return allErrs
-}
-
-// validateFeatureGateDependency returns an error for each dependency feature gate that is
-// disabled while gate is enabled. A gate has no effect unless all its dependencies are enabled.
-func validateFeatureGateDependency(gate featuregate.Feature, dependencies ...featuregate.Feature) field.ErrorList {
-	if !features.Enabled(gate) {
-		return nil
-	}
-	var allErrs field.ErrorList
-	for _, dep := range dependencies {
-		if !features.Enabled(dep) {
-			allErrs = append(allErrs, field.Invalid(featureGatesPath, gate,
-				fmt.Sprintf("%s requires %s to be enabled", gate, dep)))
-		}
-	}
-	return allErrs
-}
-
-func validateDRAFeatureGateDependencies() field.ErrorList {
-	var allErrs field.ErrorList
-	if features.Enabled(features.KueueDRAIntegrationExtendedResource) {
-		if !features.Enabled(features.KueueDRAIntegration) {
-			allErrs = append(allErrs, field.Invalid(featureGatesPath, "KueueDRAIntegrationExtendedResource", "KueueDRAIntegrationExtendedResource requires KueueDRAIntegration to be enabled"))
-		}
-	}
-
-	if features.Enabled(features.KueueDRAIntegrationPartitionableDevices) {
-		if !features.Enabled(features.KueueDRAIntegration) {
-			allErrs = append(allErrs, field.Invalid(
-				featureGatesPath,
-				"KueueDRAIntegrationPartitionableDevices",
-				"KueueDRAIntegrationPartitionableDevices requires KueueDRAIntegration to be enabled",
-			))
-		}
 	}
 
 	return allErrs
@@ -770,6 +796,10 @@ func validateCustomLabels(c *configapi.Configuration) field.ErrorList {
 	}
 	var allErrs field.ErrorList
 	seenNames := sets.New[string]()
+	countPerSourceKind := make(map[configapi.SourceKind]int)
+	if len(c.Metrics.CustomLabels) > maxCustomLabels {
+		allErrs = append(allErrs, field.TooMany(customLabelsPath, len(c.Metrics.CustomLabels), maxCustomLabels))
+	}
 	for i, entry := range c.Metrics.CustomLabels {
 		fldPath := customLabelsPath.Index(i)
 
@@ -788,19 +818,142 @@ func validateCustomLabels(c *configapi.Configuration) field.ErrorList {
 		}
 		switch {
 		case entry.SourceLabelKey != "":
-			allErrs = append(allErrs, validateQualifiedName(fldPath.Child("sourceLabelKey"), entry.SourceLabelKey)...)
+			allErrs = append(allErrs, validateLabelKey(fldPath.Child("sourceLabelKey"), entry.SourceLabelKey)...)
 		case entry.SourceAnnotationKey != "":
-			allErrs = append(allErrs, validateQualifiedName(fldPath.Child("sourceAnnotationKey"), entry.SourceAnnotationKey)...)
+			allErrs = append(allErrs, validateLabelKey(fldPath.Child("sourceAnnotationKey"), entry.SourceAnnotationKey)...)
 		default:
-			allErrs = append(allErrs, validateQualifiedName(fldPath.Child("name"), entry.Name)...)
+			allErrs = append(allErrs, validateLabelKey(fldPath.Child("name"), entry.Name)...)
+		}
+
+		sourceKind := ptr.Deref(entry.SourceKind, configapi.DefaultCustomMetricLabelSourceKind)
+		countPerSourceKind[sourceKind]++
+		if sourceKind == configapi.SourceKindWorkload {
+			if len(entry.TrackedValues) == 0 {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("trackedValues"), entry.TrackedValues,
+					"must not be empty when sourceKind is 'Workload'"))
+			}
+			if len(entry.TrackedValues) > maxTrackedWlCustomLabelValues {
+				allErrs = append(allErrs, field.Invalid(fldPath.Child("trackedValues"), entry.TrackedValues,
+					fmt.Sprintf("must not be greater than %d when sourceKind is 'Workload'", maxTrackedWlCustomLabelValues)))
+			}
+		} else if len(entry.TrackedValues) > maxTrackedCustomLabelValues {
+			allErrs = append(allErrs, field.TooMany(fldPath.Child("trackedValues"), len(entry.TrackedValues), maxTrackedCustomLabelValues))
+		}
+		if sets.New(entry.TrackedValues...).Len() < len(entry.TrackedValues) {
+			allErrs = append(allErrs, field.Invalid(fldPath.Child("trackedValues"), entry.TrackedValues, "must not contain duplicates"))
+		}
+	}
+
+	for _, kind := range slices.Sorted(maps.Keys(countPerSourceKind)) {
+		labelLimit, kindSupported := maxCustomLabelsPerSourceKind[kind]
+		if !kindSupported {
+			allErrs = append(allErrs, field.Invalid(
+				customLabelsPath,
+				c.Metrics.CustomLabels,
+				fmt.Sprintf("unknown source kind: %s", kind),
+			))
+		} else if count := countPerSourceKind[kind]; count > labelLimit {
+			allErrs = append(allErrs, field.Invalid(
+				customLabelsPath,
+				c.Metrics.CustomLabels,
+				fmt.Sprintf("too many custom labels for source kind %s: found %d, expected <= %d", kind, count, labelLimit),
+			))
+		}
+	}
+
+	return allErrs
+}
+
+func validateLabelKey(fldPath *field.Path, value string) field.ErrorList {
+	if errs := content.IsLabelKey(value); len(errs) > 0 {
+		return field.ErrorList{field.Invalid(fldPath, value, strings.Join(errs, "; "))}
+	}
+	return nil
+}
+
+func counterNameForMapping(mapping configapi.DeviceClassMapping) string {
+	if len(mapping.Sources) > 0 && mapping.Sources[0].Counter != nil {
+		return mapping.Sources[0].Counter.Name
+	}
+	return ""
+}
+
+func validateDeviceClassSource(driver string, selector *resourcev1.DeviceSelector, path *field.Path, celCache *dracel.Cache) field.ErrorList {
+	var allErrs field.ErrorList
+	if driver == "" {
+		allErrs = append(allErrs, field.Required(path.Child("driver"), ""))
+	} else if len(driver) > resourcev1.DriverNameMaxLength {
+		allErrs = append(allErrs, field.Invalid(path.Child("driver"), driver, fmt.Sprintf("must not exceed %d characters", resourcev1.DriverNameMaxLength)))
+	} else if errs := apimachineryutilvalidation.IsDNS1123Subdomain(driver); len(errs) != 0 {
+		allErrs = append(allErrs, field.Invalid(path.Child("driver"), driver, strings.Join(errs, ",")))
+	}
+	selectorPath := path.Child("deviceSelector", "cel", "expression")
+	if selector.CEL == nil || selector.CEL.Expression == "" {
+		allErrs = append(allErrs, field.Required(selectorPath, ""))
+	} else {
+		result := celCache.GetOrCompile(selector.CEL.Expression)
+		if result.Error != nil {
+			allErrs = append(allErrs, field.Invalid(selectorPath, selector.CEL.Expression,
+				fmt.Sprintf("CEL compilation failed: %v", result.Error)))
 		}
 	}
 	return allErrs
 }
 
-func validateQualifiedName(fldPath *field.Path, value string) field.ErrorList {
-	if errs := content.IsLabelKey(value); len(errs) > 0 {
-		return field.ErrorList{field.Invalid(fldPath, value, strings.Join(errs, "; "))}
+// validateQualifiedName is copied from:
+// https://github.com/kubernetes/kubernetes/blob/f5ab85e7c9d716e8bc5cf467ba931d8e8123764f/pkg/apis/resource/validation/validation.go#L1342-L1373
+func validateQualifiedName(name resourcev1.QualifiedName, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	parts := strings.Split(string(name), "/")
+	// Note: unlike validateLabelKey above, this cannot simply delegate to an
+	// upstream apimachinery helper — QualifiedName has different validation
+	// rules than a label key, and upstream's own equivalent helper has this
+	// same multi-slash gap (see TODO below).
+	switch len(parts) {
+	case 1:
+		allErrs = append(allErrs, validateCIdentifier(parts[0], fldPath)...)
+	case 2:
+		if len(parts[0]) == 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath, "", "the domain must not be empty"))
+		} else {
+			allErrs = append(allErrs, validateDriverName(parts[0], fldPath)...)
+		}
+		if len(parts[1]) == 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath, "", "the name must not be empty"))
+		} else {
+			allErrs = append(allErrs, validateCIdentifier(parts[1], fldPath)...)
+		}
+		// TODO: The corresponding declarative validation utility
+		// `resourcesQualifiedName` in
+		// `staging/src/k8s.io/apimachinery/pkg/api/validate/strfmt.go` has the
+		// same gap and should be fixed upstream; not addressed here.
+	default:
+		allErrs = append(allErrs, field.Invalid(fldPath, string(name), "a qualified name must consist of at most one '/'"))
 	}
-	return nil
+
+	return allErrs
+}
+
+func validateDriverName(name string, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if len(name) > resourcev1.DeviceMaxDomainLength {
+		allErrs = append(allErrs, field.TooLong(fldPath, "" /*unused*/, resourcev1.DeviceMaxDomainLength))
+	}
+	for _, msg := range apimachineryutilvalidation.IsDNS1123Subdomain(strings.ToLower(name)) {
+		allErrs = append(allErrs, field.Invalid(fldPath, name, msg))
+	}
+	return allErrs
+}
+
+// validateCIdentifier is copied from
+// https://github.com/kubernetes/kubernetes/blob/f5ab85e7c9d716e8bc5cf467ba931d8e8123764f/pkg/apis/resource/validation/validation.go#L1386-L1395
+func validateCIdentifier(id string, fldPath *field.Path) field.ErrorList {
+	var allErrs field.ErrorList
+	if len(id) > resourcev1.DeviceMaxIDLength {
+		allErrs = append(allErrs, field.TooLong(fldPath, "" /*unused*/, resourcev1.DeviceMaxIDLength))
+	}
+	for _, msg := range content.IsCIdentifier(id) {
+		allErrs = append(allErrs, field.Invalid(fldPath, id, msg))
+	}
+	return allErrs
 }

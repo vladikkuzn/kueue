@@ -26,8 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	jobsetapi "sigs.k8s.io/jobset/api/jobset/v1alpha2"
 
@@ -43,8 +43,8 @@ var (
 	FrameworkName = "jobset.x-k8s.io/jobset"
 )
 
-func init() {
-	utilruntime.Must(jobframework.RegisterIntegration(FrameworkName, jobframework.IntegrationCallbacks{
+func RegisterIntegration(m *jobframework.IntegrationManager) error {
+	return m.RegisterIntegration(FrameworkName, jobframework.IntegrationCallbacks{
 		SetupIndexes:      SetupIndexes,
 		NewJob:            NewJob,
 		NewReconciler:     NewReconciler,
@@ -52,7 +52,7 @@ func init() {
 		JobType:           &jobsetapi.JobSet{},
 		AddToScheme:       jobsetapi.AddToScheme,
 		MultiKueueAdapter: &multiKueueAdapter{},
-	}))
+	})
 }
 
 // +kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=list;get;watch
@@ -122,8 +122,8 @@ func (j *JobSet) PodSets(ctx context.Context, _ client.Client) ([]kueue.PodSet, 
 		if features.Enabled(features.TopologyAwareScheduling) {
 			topologyRequest, err := jobframework.NewPodSetTopologyRequest(
 				&replicatedJob.Template.Spec.Template.ObjectMeta).PodIndexLabel(
-				ptr.To(batchv1.JobCompletionIndexAnnotation)).SubGroup(
-				ptr.To(jobsetapi.JobIndexKey),
+				new(batchv1.JobCompletionIndexAnnotation)).SubGroup(
+				new(jobsetapi.JobIndexKey),
 				new(replicatedJob.Replicas)).Build()
 			if err != nil {
 				return nil, err
@@ -142,18 +142,24 @@ func (j *JobSet) RunWithPodSetsInfo(ctx context.Context, _ client.Client, podSet
 
 	// If there are Jobs already created by the JobSet, their node selectors will be updated by the JobSet controller
 	// before unsuspending the individual Jobs.
+	log := ctrl.LoggerFrom(ctx)
 	for index := range j.Spec.ReplicatedJobs {
 		template := &j.Spec.ReplicatedJobs[index].Template.Spec.Template
 		info := podSetsInfo[index]
-		if err := podset.Merge(&template.ObjectMeta, &template.Spec, info); err != nil {
+		if err := podset.Merge(log, &template.ObjectMeta, &template.Spec, info); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (j *JobSet) RestorePodSetsInfo(podSetsInfo []podset.PodSetInfo) bool {
-	if len(podSetsInfo) == 0 {
+func (j *JobSet) RestorePodSetsInfo(ctx context.Context, podSetsInfo []podset.PodSetInfo) bool {
+	if len(podSetsInfo) != len(j.Spec.ReplicatedJobs) {
+		ctrl.LoggerFrom(ctx).V(2).Info(
+			"Skipping pod set info restore because the pod set count does not match the admitted workload",
+			"expectedCount", len(j.Spec.ReplicatedJobs),
+			"gotCount", len(podSetsInfo),
+		)
 		return false
 	}
 	changed := false

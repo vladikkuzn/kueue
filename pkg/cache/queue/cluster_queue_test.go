@@ -17,10 +17,14 @@ limitations under the License.
 package queue
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	corev1 "k8s.io/api/core/v1"
@@ -29,12 +33,14 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	testingclock "k8s.io/utils/clock/testing"
-	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	config "sigs.k8s.io/kueue/apis/config/v1beta2"
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	queueafs "sigs.k8s.io/kueue/pkg/cache/queue/afs"
 	"sigs.k8s.io/kueue/pkg/features"
+	"sigs.k8s.io/kueue/pkg/metrics"
 	utilqueue "sigs.k8s.io/kueue/pkg/util/queue"
 	utiltesting "sigs.k8s.io/kueue/pkg/util/testing"
 	utiltestingapi "sigs.k8s.io/kueue/pkg/util/testing/v1beta2"
@@ -81,7 +87,7 @@ func Test_PushOrUpdate(t *testing.T) {
 		},
 		"workload is still under the backoff waiting time": {
 			workload: wlBase.Clone().
-				RequeueState(ptr.To[int32](10), new(metav1.NewTime(minuteLater))).
+				RequeueState(new(int32(10)), new(metav1.NewTime(minuteLater))).
 				Condition(metav1.Condition{
 					Type:   kueue.WorkloadEvicted,
 					Reason: kueue.WorkloadEvictedByPodsReadyTimeout,
@@ -94,7 +100,7 @@ func Test_PushOrUpdate(t *testing.T) {
 			wantInAdmissibleWorkloads: inadmissibleWorkloads{
 				"default/workload-1": workload.NewInfo(wlBase.Clone().
 					ResourceVersion("1").
-					RequeueState(ptr.To[int32](10), new(metav1.NewTime(minuteLater))).
+					RequeueState(new(int32(10)), new(metav1.NewTime(minuteLater))).
 					Condition(metav1.Condition{
 						Type:   kueue.WorkloadEvicted,
 						Reason: kueue.WorkloadEvictedByPodsReadyTimeout,
@@ -161,7 +167,7 @@ func Test_PushOrUpdate(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx, _ := utiltesting.ContextWithLog(t)
-			cq := newClusterQueueImpl(ctx, nil, defaultOrdering, fakeClock)
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, fakeClock)
 
 			if cq.PendingTotal() != 0 {
 				t.Error("ClusterQueue should be empty")
@@ -181,7 +187,7 @@ func Test_PushOrUpdate(t *testing.T) {
 			if diff := cmp.Diff(tc.wantWorkload, newWl, cmpOpts...); len(diff) != 0 {
 				t.Errorf("Unexpected workloads in heap (-want,+got):\n%s", diff)
 			}
-			if diff := cmp.Diff(tc.wantInAdmissibleWorkloads, cq.inadmissibleWorkloads, cmpOpts...); len(diff) != 0 {
+			if diff := cmp.Diff(tc.wantInAdmissibleWorkloads, cq.workloads.inadmissible, cmpOpts...); len(diff) != 0 {
 				t.Errorf("Unexpected inadmissibleWorkloads (-want,+got):\n%s", diff)
 			}
 		})
@@ -191,7 +197,7 @@ func Test_PushOrUpdate(t *testing.T) {
 func Test_Pop(t *testing.T) {
 	ctx, _ := utiltesting.ContextWithLog(t)
 	now := time.Now()
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(now))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(now))
 	wl1 := workload.NewInfo(utiltestingapi.MakeWorkload("workload-1", defaultNamespace).Creation(now).Obj())
 	wl2 := workload.NewInfo(utiltestingapi.MakeWorkload("workload-2", defaultNamespace).Creation(now.Add(time.Second)).Obj())
 	if cq.Pop() != nil {
@@ -215,7 +221,7 @@ func Test_Pop(t *testing.T) {
 func TestPushOrUpdateSkipsInflightWorkload(t *testing.T) {
 	ctx, _ := utiltesting.ContextWithLog(t)
 	now := time.Now()
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(now))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(now))
 
 	wl := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).Creation(now).Obj()
 	cq.PushOrUpdate(workload.NewInfo(wl))
@@ -260,7 +266,7 @@ func TestPushOrUpdateGenerationChanged(t *testing.T) {
 		"stays inadmissible when generation changed but backoff unexpired": {
 			updatedWorkload: utiltestingapi.MakeWorkload("workload-1", defaultNamespace).
 				Creation(now).Generation(2).ResourceVersion("2").Priority(300).
-				RequeueState(ptr.To[int32](1), new(metav1.NewTime(now.Add(time.Hour)))).
+				RequeueState(new(int32(1)), new(metav1.NewTime(now.Add(time.Hour)))).
 				Condition(metav1.Condition{
 					Type:   kueue.WorkloadRequeued,
 					Status: metav1.ConditionFalse,
@@ -274,7 +280,7 @@ func TestPushOrUpdateGenerationChanged(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx, log := utiltesting.ContextWithLog(t)
-			cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(now))
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(now))
 
 			wl := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).
 				Creation(now).Generation(1).Obj()
@@ -305,7 +311,7 @@ func TestPushOrUpdateGenerationChanged(t *testing.T) {
 
 func Test_Delete(t *testing.T) {
 	ctx, log := utiltesting.ContextWithLog(t)
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
 	wl1 := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).Obj()
 	wl2 := utiltestingapi.MakeWorkload("workload-2", defaultNamespace).Obj()
 	cq.PushOrUpdate(workload.NewInfo(wl1))
@@ -327,7 +333,7 @@ func Test_Delete(t *testing.T) {
 
 func Test_Info(t *testing.T) {
 	ctx, _ := utiltesting.ContextWithLog(t)
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
 	wl := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).Obj()
 	if info := cq.Info(workload.Key(wl)); info != nil {
 		t.Error("Workload should not exist")
@@ -340,7 +346,7 @@ func Test_Info(t *testing.T) {
 
 func Test_AddFromLocalQueue(t *testing.T) {
 	ctx, log := utiltesting.ContextWithLog(t)
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
 	wl := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).Obj()
 	queue := &LocalQueue{
 		items: map[workload.Reference]*workload.Info{
@@ -380,11 +386,11 @@ func TestSnapshotDeterministicOrder(t *testing.T) {
 			},
 			inadmissibleWorkloads: []*kueue.Workload{
 				utiltestingapi.MakeWorkload("wl3", defaultNamespace).Queue(lqName).Creation(now).UID(types.UID("uid-3")).
-					RequeueState(ptr.To[int32](1), new(metav1.NewTime(backoffUntil))).
+					RequeueState(new(int32(1)), new(metav1.NewTime(backoffUntil))).
 					Condition(metav1.Condition{Type: kueue.WorkloadRequeued, Status: metav1.ConditionFalse}).
 					Obj(),
 				utiltestingapi.MakeWorkload("wl4", defaultNamespace).Queue(lqName).Creation(now).UID(types.UID("uid-4")).
-					RequeueState(ptr.To[int32](1), new(metav1.NewTime(backoffUntil))).
+					RequeueState(new(int32(1)), new(metav1.NewTime(backoffUntil))).
 					Condition(metav1.Condition{Type: kueue.WorkloadRequeued, Status: metav1.ConditionFalse}).
 					Obj(),
 			},
@@ -394,7 +400,7 @@ func TestSnapshotDeterministicOrder(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx, log := utiltesting.ContextWithLog(t)
-			cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(now))
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(now))
 
 			for _, w := range tc.workloads {
 				cq.PushOrUpdate(workload.NewInfo(w))
@@ -413,6 +419,67 @@ func TestSnapshotDeterministicOrder(t *testing.T) {
 	}
 }
 
+func TestSnapshotFallsBackToBaseOrderingOnLocalQueueLookupError(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	ctx, _ := utiltesting.ContextWithLog(t)
+	lqLookupErr := errors.New("temporary LocalQueue lookup error")
+	cl := utiltesting.NewClientBuilder().
+		WithObjects(
+			utiltestingapi.MakeLocalQueue("higher-usage", defaultNamespace).Obj(),
+			utiltestingapi.MakeLocalQueue("lower-usage", defaultNamespace).Obj(),
+		).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if key.Name == "unavailable" {
+					return lqLookupErr
+				}
+				return cl.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+	afsUsageLedger := queueafs.NewAfsUsageLedger()
+	afsUsageLedger.SetForTest("default/higher-usage", corev1.ResourceList{resourceGPU: resource.MustParse("20")}, now)
+	afsUsageLedger.SetForTest("default/lower-usage", corev1.ResourceList{resourceGPU: resource.MustParse("10")}, now)
+
+	cq, err := newClusterQueue(
+		ctx,
+		cl,
+		utiltestingapi.MakeClusterQueue("cq").AdmissionMode(kueue.UsageBasedAdmissionFairSharing).Obj(),
+		nil,
+		defaultOrdering,
+		&config.AdmissionFairSharing{ResourceWeights: map[corev1.ResourceName]float64{resourceGPU: 1}},
+		afsUsageLedger,
+	)
+	if err != nil {
+		t.Fatalf("failed to create ClusterQueue: %v", err)
+	}
+
+	// Put the unavailable LocalQueue last so the usage cache is partially
+	// populated before its lookup fails. The priorities reproduce the
+	// contradictory ordering from Kueue#12534: fair sharing puts lower-usage
+	// before higher-usage, while base ordering puts higher-usage before
+	// unavailable and unavailable before lower-usage.
+	elements := []*workload.Info{
+		workload.NewInfo(utiltestingapi.MakeWorkload("higher-usage", defaultNamespace).
+			Queue("higher-usage").Priority(3).Creation(now).UID("uid-2").Obj()),
+		workload.NewInfo(utiltestingapi.MakeWorkload("lower-usage", defaultNamespace).
+			Queue("lower-usage").Priority(1).Creation(now).UID("uid-1").Obj()),
+		workload.NewInfo(utiltestingapi.MakeWorkload("unavailable", defaultNamespace).
+			Queue("unavailable").Priority(2).Creation(now).UID("uid-3").Obj()),
+	}
+
+	cq.snapshotSort(elements)
+
+	got := make([]string, len(elements))
+	for i, wInfo := range elements {
+		got[i] = wInfo.Obj.Name
+	}
+	want := []string{"higher-usage", "unavailable", "lower-usage"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("unexpected base ordering (-want,+got):\n%s", diff)
+	}
+}
+
 func TestSnapshotStableWithConcurrentFSUpdates(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 
@@ -423,17 +490,16 @@ func TestSnapshotStableWithConcurrentFSUpdates(t *testing.T) {
 			FairSharing(&kueue.FairSharing{Weight: new(resource.MustParse("1"))}).Obj(),
 	)
 
-	afsConsumedResources := queueafs.NewAfsConsumedResources()
-	afsConsumedResources.Set("default/lq1", corev1.ResourceList{resourceGPU: resource.MustParse("5")}, now)
-	afsConsumedResources.Set("default/lq2", corev1.ResourceList{resourceGPU: resource.MustParse("5")}, now)
+	afsUsageLedger := queueafs.NewAfsUsageLedger()
+	afsUsageLedger.SetForTest("default/lq1", corev1.ResourceList{resourceGPU: resource.MustParse("5")}, now)
+	afsUsageLedger.SetForTest("default/lq2", corev1.ResourceList{resourceGPU: resource.MustParse("5")}, now)
 
-	penaltyMap := queueafs.NewPenaltyMap()
 	ctx, _ := utiltesting.ContextWithLog(t)
 	cq, err := newClusterQueue(ctx, builder.Build(),
 		utiltestingapi.MakeClusterQueue("cq").AdmissionMode(kueue.UsageBasedAdmissionFairSharing).Obj(),
-		defaultOrdering,
+		nil, defaultOrdering,
 		&config.AdmissionFairSharing{ResourceWeights: map[corev1.ResourceName]float64{resourceGPU: 1.0}},
-		penaltyMap, afsConsumedResources)
+		afsUsageLedger)
 	if err != nil {
 		t.Fatalf("failed to create ClusterQueue: %v", err)
 	}
@@ -455,8 +521,8 @@ func TestSnapshotStableWithConcurrentFSUpdates(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				penaltyMap.Push("default/lq1", corev1.ResourceList{resourceGPU: resource.MustParse("100")})
-				penaltyMap.Sub("default/lq1", corev1.ResourceList{resourceGPU: resource.MustParse("100")})
+				afsUsageLedger.PushPenalty("default/lq1", "default/toggle", corev1.ResourceList{resourceGPU: resource.MustParse("100")}, now)
+				afsUsageLedger.SubPenalty("default/lq1", "default/toggle")
 			}
 		}
 	}()
@@ -478,9 +544,124 @@ func TestSnapshotStableWithConcurrentFSUpdates(t *testing.T) {
 	}
 }
 
+func TestSnapshotUsesDefaultWeightForMissingLocalQueue(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	ctx, _ := utiltesting.ContextWithLog(t)
+	afsUsageLedger := queueafs.NewAfsUsageLedger()
+	afsUsageLedger.SetForTest("default/existing", corev1.ResourceList{resourceGPU: resource.MustParse("10")}, now)
+	afsUsageLedger.SetForTest("default/missing", corev1.ResourceList{resourceGPU: resource.MustParse("15")}, now)
+
+	cq, err := newClusterQueue(
+		ctx,
+		utiltesting.NewClientBuilder().
+			WithObjects(utiltestingapi.MakeLocalQueue("existing", defaultNamespace).Obj()).
+			Build(),
+		utiltestingapi.MakeClusterQueue("cq").AdmissionMode(kueue.UsageBasedAdmissionFairSharing).Obj(),
+		nil,
+		defaultOrdering,
+		&config.AdmissionFairSharing{ResourceWeights: map[corev1.ResourceName]float64{resourceGPU: 1}},
+		afsUsageLedger,
+	)
+	if err != nil {
+		t.Fatalf("failed to create ClusterQueue: %v", err)
+	}
+
+	// Base ordering favors the missing queue by priority, while fair sharing with
+	// the default weight favors the existing queue by usage (10 < 15).
+	for _, wl := range []*kueue.Workload{
+		utiltestingapi.MakeWorkload("existing-low-priority", defaultNamespace).
+			Queue("existing").Priority(1).Creation(now).UID("uid-1").Obj(),
+		utiltestingapi.MakeWorkload("missing-high-priority", defaultNamespace).
+			Queue("missing").Priority(2).Creation(now).UID("uid-2").Obj(),
+	} {
+		cq.PushOrUpdate(workload.NewInfo(wl))
+	}
+
+	got := cq.Snapshot()
+	if got[0].Obj.Name != "existing-low-priority" {
+		t.Errorf("workload from missing LocalQueue should use the default weight: got %q first", got[0].Obj.Name)
+	}
+}
+
+// TestHeapOrderingStableOnLocalQueueLookupError is a regression test for Kueue#13476.
+// The two workloads have fair-sharing order opposite to their priority order: wlHigh is
+// high priority in a high-usage queue, wlLow is low priority in a low-usage queue. With a
+// client that fails every LocalQueue lookup, the old comparator fell back to priority
+// ordering and popped wlHigh first. Now it reads the cached weight and stays on
+// fair-sharing ordering, popping wlLow first, consistently across repeated comparisons.
+func TestHeapOrderingStableOnLocalQueueLookupError(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+
+	failingClient := utiltesting.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*kueue.LocalQueue); ok {
+				return errors.New("transient LocalQueue lookup error")
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+
+	// lq1 high usage (10 GPU), lq2 low usage (1 GPU); both weight 1.0.
+	afsUsageLedger := queueafs.NewAfsUsageLedger()
+	afsUsageLedger.SetForTest("default/lq1", corev1.ResourceList{resourceGPU: resource.MustParse("10")}, now)
+	afsUsageLedger.SetForTest("default/lq2", corev1.ResourceList{resourceGPU: resource.MustParse("1")}, now)
+
+	ctx, _ := utiltesting.ContextWithLog(t)
+	cq, err := newClusterQueue(ctx, failingClient,
+		utiltestingapi.MakeClusterQueue("cq").AdmissionMode(kueue.UsageBasedAdmissionFairSharing).Obj(),
+		nil, defaultOrdering,
+		&config.AdmissionFairSharing{ResourceWeights: map[corev1.ResourceName]float64{resourceGPU: 1.0}},
+		afsUsageLedger)
+	if err != nil {
+		t.Fatalf("failed to create ClusterQueue: %v", err)
+	}
+
+	// Seed the cached weights the way the manager's LocalQueue hooks do.
+	cq.addLocalQueue("default/lq1", 1.0)
+	cq.addLocalQueue("default/lq2", 1.0)
+
+	wlHigh := utiltestingapi.MakeWorkload("wl-high", defaultNamespace).
+		Queue("lq1").Priority(highPriority).Creation(now).UID("uid-high").Obj()
+	wlLow := utiltestingapi.MakeWorkload("wl-low", defaultNamespace).
+		Queue("lq2").Priority(lowPriority).Creation(now).UID("uid-low").Obj()
+
+	cq.PushOrUpdate(workload.NewInfo(wlHigh))
+	cq.PushOrUpdate(workload.NewInfo(wlLow))
+
+	// wlLow (lower usage) must pop first despite the failing client.
+	wantOrder := []workload.Reference{workload.Key(wlLow), workload.Key(wlHigh)}
+	var gotOrder []workload.Reference
+	for {
+		head := cq.Pop()
+		if head == nil {
+			break
+		}
+		gotOrder = append(gotOrder, workload.Key(head.Obj))
+	}
+	if diff := cmp.Diff(wantOrder, gotOrder); diff != "" {
+		t.Errorf("unexpected pop order with failing LocalQueue client (-want,+got):\n%s", diff)
+	}
+
+	// The comparator must stay consistent and antisymmetric across repeated calls.
+	a := workload.NewInfo(wlHigh)
+	b := workload.NewInfo(wlLow)
+	first := cq.compareFunc(a, b)
+	if first <= 0 {
+		t.Fatalf("expected wlLow (lower usage) to sort before wlHigh, got compare(high,low)=%d", first)
+	}
+	for i := range 100 {
+		if got := cq.compareFunc(a, b); got != first {
+			t.Fatalf("comparator inconsistent on call %d: got %d, want %d", i+1, got, first)
+		}
+		if got := cq.compareFunc(b, a); got != -first {
+			t.Fatalf("comparator not antisymmetric on call %d: compare(low,high)=%d, want %d", i+1, got, -first)
+		}
+	}
+}
+
 // TestSnapshotConcurrentWithRequeueNoDataRace guards against a data race on the
-// sticky workload: Snapshot sorts a copy of the pending workloads through the
-// comparator (which reads stickyWorkload.workloadName) without holding the
+// preemptor workload: Snapshot sorts a copy of the pending workloads through the
+// comparator (which reads preemptorWorkload.state) without holding the
 // ClusterQueue lock, while RequeueIfNotPresent writes that field during a
 // BestEffortFIFO preemption requeue. Run with -race to detect regressions.
 func TestSnapshotConcurrentWithRequeueNoDataRace(t *testing.T) {
@@ -490,9 +671,9 @@ func TestSnapshotConcurrentWithRequeueNoDataRace(t *testing.T) {
 			Spec: kueue.ClusterQueueSpec{
 				QueueingStrategy: kueue.BestEffortFIFO,
 			},
-		},
+		}, nil,
 		defaultOrdering,
-		nil, nil, nil)
+		nil, nil)
 	if err != nil {
 		t.Fatalf("failed to create ClusterQueue: %v", err)
 	}
@@ -530,10 +711,142 @@ func TestSnapshotConcurrentWithRequeueNoDataRace(t *testing.T) {
 	}
 }
 
+// TestSnapshotConsistentUnderConcurrentStickyChange guards against Kueue#12740:
+// Snapshot sorts a copy of the pending workloads without holding the
+// ClusterQueue lock, so the comparator must observe a single, consistent sticky
+// workload for the whole sort. If it re-read the sticky workload on every
+// comparison, a concurrent change could make the ordering non-transitive and
+// corrupt the Snapshot order. This is a logic bug, not a data race: the atomic
+// pointer already makes each access memory-safe, so -race does not catch it.
+//
+// With equal priority and creation timestamp, every valid Snapshot is either the
+// pure UID order or exactly one workload (the sticky one) pulled to the front
+// followed by the rest in UID order. Any other permutation means the sort
+// observed the sticky workload changing mid-sort.
+func TestSnapshotConsistentUnderConcurrentStickyChange(t *testing.T) {
+	ctx, _ := utiltesting.ContextWithLog(t)
+	cq, err := newClusterQueue(ctx, nil,
+		&kueue.ClusterQueue{
+			Spec: kueue.ClusterQueueSpec{
+				QueueingStrategy: kueue.BestEffortFIFO,
+			},
+		}, nil,
+		defaultOrdering,
+		nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create ClusterQueue: %v", err)
+	}
+
+	now := time.Now().Truncate(time.Second)
+	// Names are listed in UID order; equal priority and creation timestamp make
+	// UID the only tiebreak once stickiness is accounted for.
+	names := []string{"wl1", "wl2", "wl3", "wl4", "wl5", "wl6"}
+	keys := make([]workload.Reference, len(names))
+	for i, name := range names {
+		wl := utiltestingapi.MakeWorkload(name, defaultNamespace).
+			Creation(now).UID(types.UID(fmt.Sprintf("uid-%d", i))).Obj()
+		cq.PushOrUpdate(workload.NewInfo(wl))
+		keys[i] = workload.Key(wl)
+	}
+
+	// Valid orderings: pure UID order, or any single workload pulled to the front.
+	valid := [][]string{slices.Clone(names)}
+	for i := range names {
+		order := []string{names[i]}
+		for j := range names {
+			if j != i {
+				order = append(order, names[j])
+			}
+		}
+		valid = append(valid, order)
+	}
+	isValid := func(got []string) bool {
+		for _, v := range valid {
+			if slices.Equal(got, v) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Writer: continuously churn the sticky workload so it can change while a
+	// Snapshot sort is in flight. It sets the field directly (bypassing the
+	// lock) to force a change mid-sort, which the lock-free Snapshot must
+	// tolerate; the fix makes it capture the value once per sort.
+	stop := make(chan struct{})
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				for _, k := range keys {
+					cq.pw.set(k, true, 0)
+				}
+				cq.pw.clear()
+			}
+		}
+	}()
+	// Block until the writer is scheduled, so the loop below cannot finish before
+	// any churn has happened and pass vacuously.
+	<-started
+	defer close(stop)
+
+	for i := range 2000 {
+		snap := cq.Snapshot()
+		got := make([]string, len(snap))
+		for j, wInfo := range snap {
+			got[j] = wInfo.Obj.Name
+		}
+		if !isValid(got) {
+			t.Fatalf("call %d: non-transitive Snapshot ordering %v; sticky workload changed mid-sort", i+1, got)
+		}
+	}
+}
+
+func TestClusterQueueIsPreemptor(t *testing.T) {
+	ctx, _ := utiltesting.ContextWithLog(t)
+	cq, err := newClusterQueue(ctx, nil, utiltestingapi.MakeClusterQueue("cq").Obj(), nil, defaultOrdering, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to create ClusterQueue: %v", err)
+	}
+
+	wl := utiltestingapi.MakeWorkload("wl", defaultNamespace).Obj()
+	wl.Generation = 1
+	wInfo := workload.NewInfo(wl)
+	wInfo.LastEvaluatedGeneration = 1
+
+	otherWl := utiltestingapi.MakeWorkload("other", defaultNamespace).Obj()
+	otherInfo := workload.NewInfo(otherWl)
+
+	if cq.IsPreemptor(wInfo) {
+		t.Errorf("IsPreemptor(wInfo) = true, want false before requeue")
+	}
+
+	cq.RequeueIfNotPresent(ctx, wInfo, RequeueReasonPendingPreemption, "")
+
+	if !cq.IsPreemptor(wInfo) {
+		t.Errorf("IsPreemptor(wInfo) = false, want true after RequeueReasonPendingPreemption")
+	}
+	if cq.IsPreemptor(otherInfo) {
+		t.Errorf("IsPreemptor(otherInfo) = true, want false for non-preemptor workload")
+	}
+
+	wlModified := wl.DeepCopy()
+	wlModified.Generation = 2
+	wInfoModified := workload.NewInfo(wlModified)
+
+	if cq.IsPreemptor(wInfoModified) {
+		t.Errorf("IsPreemptor(wInfoModified) = true, want false after workload generation changed")
+	}
+}
+
 func TestPendingResources(t *testing.T) {
 	ctx, log := utiltesting.ContextWithLog(t)
 	now := time.Now()
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(now))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(now))
 
 	makePodSetWl := func(name string, cpu, memory string) *workload.Info {
 		ps := utiltestingapi.MakePodSet(kueue.DefaultPodSetName, 1).
@@ -574,12 +887,12 @@ func TestPendingResources(t *testing.T) {
 	}
 
 	// Sum should equal wl1 + wl2 + wl3: CPU = 2+1+3 = 6000m, Memory = 1Gi+512Mi+2Gi.
-	wantCPU := wl1.TotalRequests[0].Requests[corev1.ResourceCPU] +
-		wl2.TotalRequests[0].Requests[corev1.ResourceCPU] +
-		wl3.TotalRequests[0].Requests[corev1.ResourceCPU]
-	wantMemory := wl1.TotalRequests[0].Requests[corev1.ResourceMemory] +
-		wl2.TotalRequests[0].Requests[corev1.ResourceMemory] +
-		wl3.TotalRequests[0].Requests[corev1.ResourceMemory]
+	wantCPU := wl1.TotalRequests[0].Requests.ResourceValue(corev1.ResourceCPU) +
+		wl2.TotalRequests[0].Requests.ResourceValue(corev1.ResourceCPU) +
+		wl3.TotalRequests[0].Requests.ResourceValue(corev1.ResourceCPU)
+	wantMemory := wl1.TotalRequests[0].Requests.ResourceValue(corev1.ResourceMemory) +
+		wl2.TotalRequests[0].Requests.ResourceValue(corev1.ResourceMemory) +
+		wl3.TotalRequests[0].Requests.ResourceValue(corev1.ResourceMemory)
 	if got[corev1.ResourceCPU] != wantCPU {
 		t.Errorf("CPU mismatch: want %d, got %d", wantCPU, got[corev1.ResourceCPU])
 	}
@@ -588,10 +901,117 @@ func TestPendingResources(t *testing.T) {
 	}
 }
 
+// TestPendingResourcesAfterLocalQueueResync verifies the invariant that a
+// pending workload is tracked in exactly one bucket: an AddFromLocalQueue
+// resync must not push a workload that is already tracked as inadmissible
+// into the heap, and pendingResourcesTotal must count it exactly once
+// through the follow-up transitions.
+func TestPendingResourcesAfterLocalQueueResync(t *testing.T) {
+	ctx, log := utiltesting.ContextWithLog(t)
+	now := time.Now()
+
+	tests := map[string]struct {
+		beforeResync       func(t *testing.T, cq *ClusterQueue, wInfo *workload.Info)
+		afterResync        func(cq *ClusterQueue, wInfo *workload.Info)
+		wantInHeap         bool
+		wantInInadmissible bool
+		wantInInflight     bool
+		wantPendingActive  int
+		wantCPU            func(wInfo *workload.Info) int64
+	}{
+		"the workload stays tracked as inadmissible": {
+			beforeResync: func(_ *testing.T, cq *ClusterQueue, wInfo *workload.Info) {
+				cq.workloads.InsertInadmissible(workloadKey(wInfo), wInfo)
+			},
+			wantInInadmissible: true,
+			wantCPU:            singleWorkloadCPU,
+		},
+		"requeuing all inadmissible workloads moves it to the heap": {
+			beforeResync: func(_ *testing.T, cq *ClusterQueue, wInfo *workload.Info) {
+				cq.workloads.InsertInadmissible(workloadKey(wInfo), wInfo)
+			},
+			afterResync: func(cq *ClusterQueue, _ *workload.Info) {
+				cq.namespaceSelector = labels.Everything()
+				queueInadmissibleWorkloads(ctx, cq, utiltesting.NewFakeClient(utiltesting.MakeNamespace(defaultNamespace)))
+			},
+			wantInHeap:        true,
+			wantPendingActive: 1,
+			wantCPU:           singleWorkloadCPU,
+		},
+		"deleting the workload removes it and its resources": {
+			beforeResync: func(_ *testing.T, cq *ClusterQueue, wInfo *workload.Info) {
+				cq.workloads.InsertInadmissible(workloadKey(wInfo), wInfo)
+			},
+			afterResync: func(cq *ClusterQueue, wInfo *workload.Info) {
+				cq.Delete(log, workloadKey(wInfo))
+			},
+			wantCPU: func(*workload.Info) int64 { return 0 },
+		},
+		"the workload stays tracked as inflight": {
+			beforeResync: func(t *testing.T, cq *ClusterQueue, wInfo *workload.Info) {
+				cq.PushOrUpdate(wInfo)
+				if popped := cq.Pop(); popped == nil {
+					t.Fatal("expected to pop a workload")
+				}
+			},
+			wantInInflight:    true,
+			wantPendingActive: 1,
+			wantCPU:           singleWorkloadCPU,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(now))
+			ps := utiltestingapi.MakePodSet(kueue.DefaultPodSetName, 1).
+				Request(corev1.ResourceCPU, "1")
+			wInfo := workload.NewInfo(utiltestingapi.MakeWorkload("workload", defaultNamespace).
+				PodSets(*ps.Obj()).
+				Creation(now).Obj())
+			key := workloadKey(wInfo)
+
+			tc.beforeResync(t, cq, wInfo)
+			lq := &LocalQueue{items: map[workload.Reference]*workload.Info{
+				key: wInfo,
+			}}
+			if added := cq.AddFromLocalQueue(lq, nil, nil); added {
+				t.Error("AddFromLocalQueue() = true, want false; the workload is already tracked")
+			}
+
+			if tc.afterResync != nil {
+				tc.afterResync(cq, wInfo)
+			}
+
+			inHeap := cq.workloads.active.GetByKey(key) != nil
+			inInadmissible := cq.workloads.inadmissible.hasKey(key)
+			inInflight := cq.workloads.inflight != nil && workloadKey(cq.workloads.inflight) == key
+			if inHeap != tc.wantInHeap {
+				t.Errorf("in heap = %v, want %v", inHeap, tc.wantInHeap)
+			}
+			if inInadmissible != tc.wantInInadmissible {
+				t.Errorf("in inadmissibleWorkloads = %v, want %v", inInadmissible, tc.wantInInadmissible)
+			}
+			if inInflight != tc.wantInInflight {
+				t.Errorf("in inflight = %v, want %v", inInflight, tc.wantInInflight)
+			}
+			if got := cq.workloads.pendingActive(); got.Total() != tc.wantPendingActive {
+				t.Errorf("pending active workloads = %d, want %d", got.Total(), tc.wantPendingActive)
+			}
+			if gotCPU, wantCPU := cq.pendingResources()[corev1.ResourceCPU], tc.wantCPU(wInfo); gotCPU != wantCPU {
+				t.Errorf("pending CPU = %d, want %d", gotCPU, wantCPU)
+			}
+		})
+	}
+}
+
+func singleWorkloadCPU(wInfo *workload.Info) int64 {
+	return wInfo.TotalRequests[0].Requests.ResourceValue(corev1.ResourceCPU)
+}
+
 func TestPendingInLocalQueueCountsInflight(t *testing.T) {
 	ctx, _ := utiltesting.ContextWithLog(t)
 	now := time.Now()
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(now))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(now))
 
 	inflightWl := utiltestingapi.MakeWorkload("wl-inflight", defaultNamespace).
 		Queue("lq-a").
@@ -625,7 +1045,7 @@ func TestPendingInLocalQueueCountsInflight(t *testing.T) {
 
 func Test_DeleteFromLocalQueue(t *testing.T) {
 	ctx, log := utiltesting.ContextWithLog(t)
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
 	q := utiltestingapi.MakeLocalQueue("foo", "").ClusterQueue("cq").Obj()
 	qImpl := newLocalQueue(q)
 	wl1 := utiltestingapi.MakeWorkload("wl1", "").Queue(kueue.LocalQueueName(q.Name)).Obj()
@@ -651,8 +1071,8 @@ func Test_DeleteFromLocalQueue(t *testing.T) {
 	if cq.PendingTotal() != wantPending {
 		t.Errorf("clusterQueue's workload number not right, want %v, got %v", wantPending, cq.PendingTotal())
 	}
-	if cq.inadmissibleWorkloads.len() != len(inadmissibleWorkloads) {
-		t.Errorf("clusterQueue's workload number in inadmissibleWorkloads not right, want %v, got %v", len(inadmissibleWorkloads), cq.inadmissibleWorkloads.len())
+	if cq.workloads.inadmissible.len() != len(inadmissibleWorkloads) {
+		t.Errorf("clusterQueue's workload number in inadmissibleWorkloads not right, want %v, got %v", len(inadmissibleWorkloads), cq.workloads.inadmissible.len())
 	}
 
 	cq.DeleteFromLocalQueue(log, qImpl, nil, nil)
@@ -677,7 +1097,7 @@ func TestClusterQueueImpl(t *testing.T) {
 		utiltestingapi.MakeWorkload("w2", "ns2").Queue("q2").Obj(),
 		utiltestingapi.MakeWorkload("w3", "ns3").Queue("q3").Obj(),
 		utiltestingapi.MakeWorkload("w4-requeue-state", "ns1").
-			RequeueState(ptr.To[int32](1), new(metav1.NewTime(minuteLater))).
+			RequeueState(new(int32(1)), new(metav1.NewTime(minuteLater))).
 			Queue("q1").
 			Condition(metav1.Condition{
 				Type:   kueue.WorkloadEvicted,
@@ -810,7 +1230,7 @@ func TestClusterQueueImpl(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			ctx, log := utiltesting.ContextWithLog(t)
-			cq := newClusterQueueImpl(ctx, nil, defaultOrdering, fakeClock)
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, fakeClock)
 			err := cq.Update(utiltestingapi.MakeClusterQueue("cq").
 				NamespaceSelector(&metav1.LabelSelector{
 					MatchExpressions: []metav1.LabelSelectorRequirement{
@@ -864,7 +1284,7 @@ func TestClusterQueueImpl(t *testing.T) {
 
 func TestQueueInadmissibleWorkloadsDuringScheduling(t *testing.T) {
 	ctx, log := utiltesting.ContextWithLog(t)
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
 	cq.namespaceSelector = labels.Everything()
 	wl := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).Obj()
 	cl := utiltesting.NewFakeClient(wl, utiltesting.MakeNamespace(defaultNamespace))
@@ -921,12 +1341,12 @@ func TestBackoffWaitingTimeExpired(t *testing.T) {
 		},
 		"workload doesn't have an evicted condition with reason=PodsReadyTimeout": {
 			workloadInfo: workload.NewInfo(utiltestingapi.MakeWorkload("wl", "ns").
-				RequeueState(ptr.To[int32](10), nil).Obj()),
+				RequeueState(new(int32(10)), nil).Obj()),
 			want: true,
 		},
 		"now already has exceeded requeueAt": {
 			workloadInfo: workload.NewInfo(utiltestingapi.MakeWorkload("wl", "ns").
-				RequeueState(ptr.To[int32](10), new(metav1.NewTime(minuteAgo))).
+				RequeueState(new(int32(10)), new(metav1.NewTime(minuteAgo))).
 				Condition(metav1.Condition{
 					Type:   kueue.WorkloadEvicted,
 					Status: metav1.ConditionTrue,
@@ -936,7 +1356,7 @@ func TestBackoffWaitingTimeExpired(t *testing.T) {
 		},
 		"now hasn't yet exceeded requeueAt": {
 			workloadInfo: workload.NewInfo(utiltestingapi.MakeWorkload("wl", "ns").
-				RequeueState(ptr.To[int32](10), new(metav1.NewTime(minuteLater))).
+				RequeueState(new(int32(10)), new(metav1.NewTime(minuteLater))).
 				Condition(metav1.Condition{
 					Type:   kueue.WorkloadEvicted,
 					Status: metav1.ConditionTrue,
@@ -948,7 +1368,7 @@ func TestBackoffWaitingTimeExpired(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx, _ := utiltesting.ContextWithLog(t)
-			cq := newClusterQueueImpl(ctx, nil, defaultOrdering, fakeClock)
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, fakeClock)
 			got := cq.backoffWaitingTimeExpired(tc.workloadInfo)
 			if tc.want != got {
 				t.Errorf("Unexpected result from backoffWaitingTimeExpired\nwant: %v\ngot: %v\n", tc.want, got)
@@ -1029,9 +1449,9 @@ func TestBestEffortFIFORequeueIfNotPresent(t *testing.T) {
 					Spec: kueue.ClusterQueueSpec{
 						QueueingStrategy: kueue.BestEffortFIFO,
 					},
-				},
+				}, nil,
 				workload.Ordering{PodsReadyRequeuingTimestamp: config.EvictionTimestamp},
-				nil, nil, nil)
+				nil, nil)
 			wl := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).Obj()
 			info := workload.NewInfo(wl)
 			info.LastAssignment = tc.lastAssignment
@@ -1039,12 +1459,12 @@ func TestBestEffortFIFORequeueIfNotPresent(t *testing.T) {
 				t.Error("failed to requeue nonexistent workload")
 			}
 
-			gotInadmissible := cq.inadmissibleWorkloads.hasKey(workload.Key(wl))
+			gotInadmissible := cq.workloads.inadmissible.hasKey(workload.Key(wl))
 			if diff := cmp.Diff(tc.wantInadmissible, gotInadmissible); diff != "" {
 				t.Errorf("Unexpected inadmissible status (-want,+got):\n%s", diff)
 			}
 
-			gotSticky := cq.sw.matches(workload.Key(wl))
+			gotSticky := cq.pw.stickyMatches(workload.Key(wl))
 			if diff := cmp.Diff(tc.wantSticky, gotSticky); diff != "" {
 				t.Errorf("Unexpected sticky status (-want,+got):\n%s", diff)
 			}
@@ -1056,6 +1476,61 @@ func TestBestEffortFIFORequeueIfNotPresent(t *testing.T) {
 	}
 }
 
+func TestBestEffortFIFOFailedPreemptionNotSticky(t *testing.T) {
+	ctx, _ := utiltesting.ContextWithLog(t)
+	cq, err := newClusterQueue(ctx, nil,
+		&kueue.ClusterQueue{
+			Spec: kueue.ClusterQueueSpec{
+				QueueingStrategy: kueue.BestEffortFIFO,
+			},
+		}, nil,
+		workload.Ordering{PodsReadyRequeuingTimestamp: config.EvictionTimestamp},
+		nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create ClusterQueue: %v", err)
+	}
+
+	lowPriorityWl := utiltestingapi.MakeWorkload("low-wl", defaultNamespace).
+		Priority(0).
+		Obj()
+	highPriorityWl := utiltestingapi.MakeWorkload("high-wl", defaultNamespace).
+		Priority(10).
+		Obj()
+
+	// When lowPriorityWl is requeued with PendingPreemption, it becomes sticky at the head
+	// even if a higher priority workload is pushed.
+	cq.PushOrUpdate(workload.NewInfo(lowPriorityWl))
+	popped := cq.Pop()
+	if popped == nil || popped.Obj.Name != "low-wl" {
+		t.Fatalf("Expected low-wl to be popped first, got %v", popped)
+	}
+	cq.RequeueIfNotPresent(ctx, popped, RequeueReasonPendingPreemption, "")
+	cq.PushOrUpdate(workload.NewInfo(highPriorityWl))
+
+	// Because low-wl is sticky, it pops before high-wl despite lower priority.
+	poppedLow := cq.Pop()
+	if poppedLow == nil || poppedLow.Obj.Name != "low-wl" {
+		t.Errorf("Expected sticky low-wl to pop before high-wl, got %v", poppedLow)
+	}
+	poppedHigh := cq.Pop()
+	if poppedHigh == nil || poppedHigh.Obj.Name != "high-wl" {
+		t.Errorf("Expected high-wl to pop second, got %v", poppedHigh)
+	}
+
+	// When lowPriorityWl is requeued with PreemptionFailed, it does NOT become sticky,
+	// and any previous sticky state is cleared.
+	// Therefore, highPriorityWl pops before lowPriorityWl according to priority order.
+	cq.RequeueIfNotPresent(ctx, poppedLow, RequeueReasonPreemptionFailed, "")
+	cq.RequeueIfNotPresent(ctx, poppedHigh, RequeueReasonFailedAfterNomination, "")
+
+	if got := cq.Pop(); got == nil || got.Obj.Name != "high-wl" {
+		t.Errorf("Expected non-sticky high-wl to pop before low-wl with failed preemption, got %v", got)
+	}
+	if got := cq.Pop(); got == nil || got.Obj.Name != "low-wl" {
+		t.Errorf("Expected low-wl to pop second, got %v", got)
+	}
+}
+
 func TestFIFOClusterQueue(t *testing.T) {
 	ctx, log := utiltesting.ContextWithLog(t)
 	q, err := newClusterQueue(ctx, nil,
@@ -1063,10 +1538,10 @@ func TestFIFOClusterQueue(t *testing.T) {
 			Spec: kueue.ClusterQueueSpec{
 				QueueingStrategy: kueue.StrictFIFO,
 			},
-		},
+		}, nil,
 		workload.Ordering{
 			PodsReadyRequeuingTimestamp: config.EvictionTimestamp,
-		}, nil, nil, nil)
+		}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed creating ClusterQueue %v", err)
 	}
@@ -1221,9 +1696,9 @@ func TestStrictFIFO(t *testing.T) {
 					Spec: kueue.ClusterQueueSpec{
 						QueueingStrategy: kueue.StrictFIFO,
 					},
-				},
+				}, nil,
 				*tt.workloadOrdering,
-				nil, nil, nil)
+				nil, nil)
 			if err != nil {
 				t.Fatalf("Failed creating ClusterQueue %v", err)
 			}
@@ -1265,15 +1740,15 @@ func TestStrictFIFORequeueIfNotPresent(t *testing.T) {
 					Spec: kueue.ClusterQueueSpec{
 						QueueingStrategy: kueue.StrictFIFO,
 					},
-				},
+				}, nil,
 				workload.Ordering{PodsReadyRequeuingTimestamp: config.EvictionTimestamp},
-				nil, nil, nil)
+				nil, nil)
 			wl := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).Obj()
 			if ok := cq.RequeueIfNotPresent(ctx, workload.NewInfo(wl), reason, ""); !ok {
 				t.Error("failed to requeue nonexistent workload")
 			}
 
-			gotInadmissible := cq.inadmissibleWorkloads.hasKey(workload.Key(wl))
+			gotInadmissible := cq.workloads.inadmissible.hasKey(workload.Key(wl))
 			if test.wantInadmissible != gotInadmissible {
 				t.Errorf("Got inadmissible after requeue %t, want %t", gotInadmissible, test.wantInadmissible)
 			}
@@ -1439,12 +1914,12 @@ func TestFsAdmission(t *testing.T) {
 			}
 			client := builder.Build()
 
-			afsConsumedResources := queueafs.NewAfsConsumedResources()
+			afsUsageLedger := queueafs.NewAfsUsageLedger()
 			for lqKey, consumedResources := range tc.initConsumedResources {
-				afsConsumedResources.Set(utilqueue.LocalQueueReference(lqKey), consumedResources, time.Now())
+				afsUsageLedger.SetForTest(utilqueue.LocalQueueReference(lqKey), consumedResources, time.Now())
 			}
 
-			cq, _ := newClusterQueue(t.Context(), client, tc.cq, defaultOrdering, tc.afsConfig, nil, afsConsumedResources)
+			cq, _ := newClusterQueue(t.Context(), client, tc.cq, nil, defaultOrdering, tc.afsConfig, afsUsageLedger)
 			for _, wl := range tc.wls {
 				cq.PushOrUpdate(workload.NewInfo(&wl))
 			}
@@ -1502,7 +1977,7 @@ func TestRecordInadmissibleHash(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, _ := utiltesting.ContextWithLog(t)
 			now := time.Now()
-			cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(now))
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(now))
 			cq.queueingStrategy = kueue.BestEffortFIFO
 
 			i := 0
@@ -1555,7 +2030,7 @@ func TestPushOrUpdateRespectsInadmissibleHashes(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx, _ := utiltesting.ContextWithLog(t)
-			cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
 			cq.queueingStrategy = kueue.BestEffortFIFO
 
 			for _, h := range tc.inadmissibleHashes {
@@ -1580,8 +2055,10 @@ func TestPushOrUpdateRespectsInadmissibleHashes(t *testing.T) {
 }
 
 func TestQueueInadmissibleWorkloadsClearsHashes(t *testing.T) {
+	features.SetFeatureGateDuringTest(t, features.SchedulingEquivalenceHashing, true)
+
 	ctx, _ := utiltesting.ContextWithLog(t)
-	cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+	cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
 	cq.queueingStrategy = kueue.BestEffortFIFO
 	cq.namespaceSelector = labels.Everything()
 
@@ -1595,6 +2072,10 @@ func TestQueueInadmissibleWorkloadsClearsHashes(t *testing.T) {
 	if _, has := cq.hashToBulkMoveReason["test-hash"]; !has {
 		t.Fatal("hash should be recorded before clearing")
 	}
+	activeHashes, inadmissibleHashes := cq.PendingSchedulingHashes()
+	if activeHashes != 0 || inadmissibleHashes != 1 {
+		t.Fatalf("before requeue: activeHashes=%d inadmissibleHashes=%d, want activeHashes=0 inadmissibleHashes=1", activeHashes, inadmissibleHashes)
+	}
 
 	queueInadmissibleWorkloads(ctx, cq, utiltesting.NewFakeClient(
 		wl, utiltesting.MakeNamespace(defaultNamespace),
@@ -1607,6 +2088,10 @@ func TestQueueInadmissibleWorkloadsClearsHashes(t *testing.T) {
 	active, inadmissible := cq.Pending()
 	if active != 1 || inadmissible != 0 {
 		t.Errorf("after requeue: active=%d inadmissible=%d, want active=1 inadmissible=0", active, inadmissible)
+	}
+	activeHashes, inadmissibleHashes = cq.PendingSchedulingHashes()
+	if activeHashes != 1 || inadmissibleHashes != 0 {
+		t.Errorf("after requeue: activeHashes=%d inadmissibleHashes=%d, want activeHashes=1 inadmissibleHashes=0", activeHashes, inadmissibleHashes)
 	}
 }
 
@@ -1646,9 +2131,9 @@ func TestRequeueHashTriggerByReason(t *testing.T) {
 					Spec: kueue.ClusterQueueSpec{
 						QueueingStrategy: kueue.BestEffortFIFO,
 					},
-				},
+				}, nil,
 				workload.Ordering{PodsReadyRequeuingTimestamp: config.EvictionTimestamp},
-				nil, nil, nil)
+				nil, nil)
 
 			wl := utiltestingapi.MakeWorkload("workload-1", defaultNamespace).
 				Request(corev1.ResourceCPU, "1").Obj()
@@ -1706,7 +2191,7 @@ func TestGetNoFitReason(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx, _ := utiltesting.ContextWithLog(t)
-			cq := newClusterQueueImpl(ctx, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+			cq := newClusterQueueImpl(ctx, nil, nil, defaultOrdering, testingclock.NewFakeClock(time.Now()))
 			cq.queueingStrategy = kueue.BestEffortFIFO
 
 			wlBuilder := utiltestingapi.MakeWorkload("wl", defaultNamespace)
@@ -1727,7 +2212,7 @@ func TestGetNoFitReason(t *testing.T) {
 			wlKey := workload.Key(wl)
 			if tc.deleteFromInadmissible {
 				cq.rwm.Lock()
-				cq.inadmissibleWorkloads.delete(wlKey)
+				cq.workloads.inadmissible.delete(wlKey)
 				cq.rwm.Unlock()
 			}
 
@@ -1737,6 +2222,225 @@ func TestGetNoFitReason(t *testing.T) {
 			}
 			if ok && reason != tc.wantReason {
 				t.Errorf("GetNoFitReason() reason = %q, want %q", reason, tc.wantReason)
+			}
+		})
+	}
+}
+
+func TestClusterQueuePendingTrackers(t *testing.T) {
+	cqLabel := config.ControllerMetricsCustomLabel{
+		Name:           "cq-team",
+		SourceLabelKey: "team",
+		SourceKind:     new(config.SourceKindClusterQueue),
+	}
+	wlLabel1 := config.ControllerMetricsCustomLabel{
+		Name:           "workload-project",
+		SourceLabelKey: "project",
+		SourceKind:     new(config.SourceKindWorkload),
+		TrackedValues:  []string{"project-a", "project-b"},
+	}
+	wlLabel2 := config.ControllerMetricsCustomLabel{
+		Name:           "workload-type",
+		SourceLabelKey: "type",
+		SourceKind:     new(config.SourceKindWorkload),
+		TrackedValues:  []string{"type-a", "type-b"},
+	}
+
+	emptyVals := [6]string{}
+	labelVals1 := [6]string{"project-a", "type-a"}
+	labelVals2 := [6]string{"project-b", "type-b"}
+	labelValsUntracked := [6]string{config.UntrackedCustomLabelValue, config.UntrackedCustomLabelValue}
+
+	makeWorkload := func(name string, labels map[string]string) *workload.Info {
+		wl := utiltestingapi.MakeWorkload(name, defaultNamespace).
+			Labels(labels).
+			Obj()
+		return workload.NewInfo(wl)
+	}
+
+	cases := map[string]struct {
+		labels           *[]config.ControllerMetricsCustomLabel
+		ops              func(context.Context, logr.Logger, *ClusterQueue)
+		wantPending      map[[6]string]int
+		wantInadmissible map[[6]string]int
+	}{
+		"no custom labels defined": {
+			labels: &[]config.ControllerMetricsCustomLabel{},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "project-b"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+				popped := cq.Pop()
+				cq.RequeueIfNotPresent(ctx, popped, RequeueReasonNoFit, QuotaReservedReason(""))
+			},
+			wantPending:      map[[6]string]int{emptyVals: 1},
+			wantInadmissible: map[[6]string]int{emptyVals: 1},
+		},
+		"only ClusterQueue custom label defined": {
+			labels: &[]config.ControllerMetricsCustomLabel{cqLabel},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "project-b"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+				popped := cq.Pop()
+				cq.RequeueIfNotPresent(ctx, popped, RequeueReasonNoFit, QuotaReservedReason(""))
+			},
+			wantPending:      map[[6]string]int{emptyVals: 1},
+			wantInadmissible: map[[6]string]int{emptyVals: 1},
+		},
+		"Workload custom label defined: Push operation": {
+			labels: &[]config.ControllerMetricsCustomLabel{wlLabel1, wlLabel2},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a", "type": "type-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "project-a", "type": "type-a"})
+				wl3 := makeWorkload("wl3", map[string]string{"project": "project-b", "type": "type-b"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+				cq.PushOrUpdate(wl3)
+			},
+			wantPending:      map[[6]string]int{labelVals1: 2, labelVals2: 1},
+			wantInadmissible: map[[6]string]int{},
+		},
+		"Workload custom label defined: Pop operation": {
+			labels: &[]config.ControllerMetricsCustomLabel{wlLabel1, wlLabel2},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a", "type": "type-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "project-b", "type": "type-b"})
+				wl3 := makeWorkload("wl3", map[string]string{"project": "project-b", "type": "type-b"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+				cq.PushOrUpdate(wl3)
+				cq.Pop()
+				cq.Pop()
+			},
+			wantPending: map[[6]string]int{
+				labelVals1: 0,
+				labelVals2: 2, // 1 on heap + 1 inflight
+			},
+			wantInadmissible: map[[6]string]int{},
+		},
+		"Workload custom label defined: ClearInflight and Delete": {
+			labels: &[]config.ControllerMetricsCustomLabel{wlLabel1, wlLabel2},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a", "type": "type-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "project-b", "type": "type-b"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+				popped := cq.Pop()
+				cq.Delete(log, workload.Key(popped.Obj))
+				cq.Delete(log, workload.Key(wl2.Obj))
+			},
+			wantPending:      map[[6]string]int{labelVals1: 0, labelVals2: 0},
+			wantInadmissible: map[[6]string]int{},
+		},
+		"Workload custom label defined: Requeue to inadmissible and QueueInadmissibleWorkloads": {
+			labels: &[]config.ControllerMetricsCustomLabel{wlLabel1, wlLabel2},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a", "type": "type-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "project-b", "type": "type-b"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+				popped1 := cq.Pop()
+				cq.RequeueIfNotPresent(ctx, popped1, RequeueReasonNoFit, QuotaReservedReason(""))
+				popped2 := cq.Pop()
+				cq.RequeueIfNotPresent(ctx, popped2, RequeueReasonNoFit, QuotaReservedReason(""))
+				queueInadmissibleWorkloads(ctx, cq, utiltesting.NewFakeClient(
+					wl1.Obj, wl2.Obj, utiltesting.MakeNamespace(defaultNamespace),
+				))
+			},
+			wantPending:      map[[6]string]int{labelVals1: 1, labelVals2: 1},
+			wantInadmissible: map[[6]string]int{labelVals1: 0, labelVals2: 0},
+		},
+		"Workload custom label defined: Update workload in queue with modified label": {
+			labels: &[]config.ControllerMetricsCustomLabel{wlLabel1, wlLabel2},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a", "type": "type-a"})
+				cq.PushOrUpdate(wl1)
+				wl1Updated := makeWorkload("wl1", map[string]string{"project": "project-b", "type": "type-b"})
+				cq.PushOrUpdate(wl1Updated)
+			},
+			wantPending:      map[[6]string]int{labelVals1: 0, labelVals2: 1},
+			wantInadmissible: map[[6]string]int{},
+		},
+		"Workload custom label defined: Delete workload from inadmissible": {
+			labels: &[]config.ControllerMetricsCustomLabel{wlLabel1, wlLabel2},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a", "type": "type-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "project-a", "type": "type-a"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+				popped1 := cq.Pop()
+				cq.RequeueIfNotPresent(ctx, popped1, RequeueReasonNoFit, QuotaReservedReason(""))
+				popped2 := cq.Pop()
+				cq.RequeueIfNotPresent(ctx, popped2, RequeueReasonNoFit, QuotaReservedReason(""))
+				cq.Delete(log, workload.Key(wl1.Obj))
+			},
+			wantPending:      map[[6]string]int{labelVals1: 0},
+			wantInadmissible: map[[6]string]int{labelVals1: 1},
+		},
+		"Both ClusterQueue and Workload custom labels defined": {
+			labels: &[]config.ControllerMetricsCustomLabel{cqLabel, wlLabel1, wlLabel2},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a", "type": "type-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "project-b", "type": "type-b"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+				popped1 := cq.Pop()
+				cq.RequeueIfNotPresent(ctx, popped1, RequeueReasonNoFit, QuotaReservedReason(""))
+			},
+			wantPending:      map[[6]string]int{labelVals1: 0, labelVals2: 1},
+			wantInadmissible: map[[6]string]int{labelVals1: 1},
+		},
+		"Workload custom label using undefined label values": {
+			labels: &[]config.ControllerMetricsCustomLabel{wlLabel1, wlLabel2},
+			ops: func(ctx context.Context, log logr.Logger, cq *ClusterQueue) {
+				wl1 := makeWorkload("wl1", map[string]string{"project": "project-a", "type": "type-a"})
+				wl2 := makeWorkload("wl2", map[string]string{"project": "untracked-value", "type": "untracked-value"})
+				cq.PushOrUpdate(wl1)
+				cq.PushOrUpdate(wl2)
+			},
+			wantPending:      map[[6]string]int{labelVals1: 1, labelValsUntracked: 1},
+			wantInadmissible: map[[6]string]int{},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Cleanup(func() { metrics.InitMetricVectors(nil) })
+			features.SetFeatureGateDuringTest(t, features.CustomMetricLabels, true)
+			features.SetFeatureGateDuringTest(t, features.SchedulingEquivalenceHashing, false)
+			ctx, log := utiltesting.ContextWithLog(t)
+			cl := metrics.NewCustomLabels(*tc.labels)
+			cq := newClusterQueueImpl(ctx, nil, cl, defaultOrdering, testingclock.NewFakeClock(time.Now()))
+			cq.queueingStrategy = kueue.BestEffortFIFO
+			cq.namespaceSelector = labels.Everything()
+
+			if tc.ops != nil {
+				tc.ops(ctx, log, cq)
+			}
+
+			gotPendingBreakdown, gotInadmissibleBreakdown := cq.PendingBreakdown()
+
+			gotPending := make(map[[6]string]int, 0)
+			for vals, count := range gotPendingBreakdown.Iter() {
+				key := [6]string{}
+				copy(key[:], vals.OrderedList())
+				gotPending[key] = count
+			}
+			if diff := cmp.Diff(tc.wantPending, gotPending); diff != "" {
+				t.Errorf("Unexpected pending tracker (-want +got):\n%s", diff)
+			}
+
+			gotInadmissible := make(map[[6]string]int, 0)
+			for vals, count := range gotInadmissibleBreakdown.Iter() {
+				key := [6]string{}
+				copy(key[:], vals.OrderedList())
+				gotInadmissible[key] = count
+			}
+			if diff := cmp.Diff(tc.wantInadmissible, gotInadmissible); diff != "" {
+				t.Errorf("Unexpected inadmissible tracker (-want +got):\n%s", diff)
 			}
 		})
 	}

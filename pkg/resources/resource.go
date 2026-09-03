@@ -46,11 +46,14 @@ func (frq FlavorResourceQuantities) MarshalJSON() ([]byte, error) {
 }
 
 func (frq FlavorResourceQuantities) FlattenFlavors() Requests {
-	result := Requests{}
+	if len(frq) == 0 {
+		return NewRequests()
+	}
+	result := map[corev1.ResourceName]int64{}
 	for key, val := range frq {
 		result[key.Resource] += val.Int64()
 	}
-	return result
+	return NewRequestsFromMap(result)
 }
 
 // Clone returns a shallow copy of the map.

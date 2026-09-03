@@ -25,7 +25,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	jobsetapi "sigs.k8s.io/jobset/api/jobset/v1alpha2"
@@ -73,7 +72,7 @@ func TestRunWithPodsetsInfo(t *testing.T) {
 	testTrainJob := testingtrainjob.MakeTrainJob("trainjob", "ns").RuntimeRef(kftrainerapi.RuntimeRef{
 		APIGroup: new(kftrainerapi.GroupVersion.Group),
 		Name:     "test",
-		Kind:     ptr.To(kftrainerapi.ClusterTrainingRuntimeKind),
+		Kind:     new(kftrainerapi.ClusterTrainingRuntimeKind),
 	})
 	testJobset := testingjobset.MakeJobSet("", "").ReplicatedJobs(
 		testingjobset.ReplicatedJobRequirements{
@@ -239,6 +238,9 @@ func TestRunWithPodsetsInfo(t *testing.T) {
 				Obj(),
 			podsetsInfo: []podset.PodSetInfo{
 				{
+					Name: "user-provided",
+				},
+				{
 					Name: "node",
 					Annotations: map[string]string{
 						"test-annotation": "new-value",
@@ -261,6 +263,17 @@ func TestRunWithPodsetsInfo(t *testing.T) {
 					testingtrainjob.MakeRuntimePatch(runtimePatchManagerName).
 						EmptyMetadata().
 						ReplicatedJobs(
+							kftrainerapi.ReplicatedJobPatch{
+								Name: "user-provided",
+								Template: &kftrainerapi.JobTemplatePatch{
+									Spec: &kftrainerapi.JobSpecPatch{
+										Template: &kftrainerapi.PodTemplatePatch{
+											Metadata: &metav1.ObjectMeta{},
+											Spec:     &kftrainerapi.PodSpecPatch{},
+										},
+									},
+								},
+							},
 							testingtrainjob.MakeReplicatedJobPatch("node").
 								PodAnnotation("test-annotation", "new-value").
 								PodLabel(constants.PodSetLabel, "node").
@@ -356,7 +369,7 @@ func TestRestorePodSetsInfo(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			kTrainJob := (*TrainJob)(tc.trainJob)
-			ret := kTrainJob.RestorePodSetsInfo([]podset.PodSetInfo{})
+			ret := kTrainJob.RestorePodSetsInfo(t.Context(), []podset.PodSetInfo{})
 			if ret != tc.wantReturn {
 				t.Errorf("RunWithPodSetsInfo() unexpected return value. got: %v. want :%v", ret, tc.wantReturn)
 			}
@@ -372,7 +385,7 @@ func TestReconciler(t *testing.T) {
 	testTrainJob := testingtrainjob.MakeTrainJob("trainjob", "ns").RuntimeRef(kftrainerapi.RuntimeRef{
 		APIGroup: new(kftrainerapi.GroupVersion.Group),
 		Name:     "test",
-		Kind:     ptr.To(kftrainerapi.ClusterTrainingRuntimeKind),
+		Kind:     new(kftrainerapi.ClusterTrainingRuntimeKind),
 	})
 	testJobset := testingjobset.MakeJobSet("", "").ReplicatedJobs(
 		testingjobset.ReplicatedJobRequirements{
@@ -411,13 +424,13 @@ func TestReconciler(t *testing.T) {
 					PodSets(
 						*utiltestingapi.MakePodSet("node", 1).
 							PodIndexLabel(new("batch.kubernetes.io/job-completion-index")).
-							SubGroupIndexLabel(ptr.To(jobsetapi.JobIndexKey)).
-							SubGroupCount(ptr.To[int32](1)).
+							SubGroupIndexLabel(new(jobsetapi.JobIndexKey)).
+							SubGroupCount(new(int32(1))).
 							Obj(),
 						*utiltestingapi.MakePodSet("foo", 1).
 							PodIndexLabel(new("batch.kubernetes.io/job-completion-index")).
-							SubGroupIndexLabel(ptr.To(jobsetapi.JobIndexKey)).
-							SubGroupCount(ptr.To[int32](1)).
+							SubGroupIndexLabel(new(jobsetapi.JobIndexKey)).
+							SubGroupCount(new(int32(1))).
 							Obj(),
 					).
 					Obj(),
@@ -435,13 +448,13 @@ func TestReconciler(t *testing.T) {
 					PodSets(
 						*utiltestingapi.MakePodSet("node", 2).
 							PodIndexLabel(new("batch.kubernetes.io/job-completion-index")).
-							SubGroupIndexLabel(ptr.To(jobsetapi.JobIndexKey)).
-							SubGroupCount(ptr.To[int32](1)).
+							SubGroupIndexLabel(new(jobsetapi.JobIndexKey)).
+							SubGroupCount(new(int32(1))).
 							Obj(),
 						*utiltestingapi.MakePodSet("foo", 1).
 							PodIndexLabel(new("batch.kubernetes.io/job-completion-index")).
-							SubGroupIndexLabel(ptr.To(jobsetapi.JobIndexKey)).
-							SubGroupCount(ptr.To[int32](1)).
+							SubGroupIndexLabel(new(jobsetapi.JobIndexKey)).
+							SubGroupCount(new(int32(1))).
 							Obj(),
 					).
 					Obj(),

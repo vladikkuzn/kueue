@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/component-base/featuregate"
-	"k8s.io/utils/ptr"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/controller/jobs/raycluster"
@@ -63,7 +62,7 @@ func TestPodSets(t *testing.T) {
 					},
 					rayv1.WorkerGroupSpec{
 						GroupName: "group2",
-						Replicas:  ptr.To[int32](3),
+						Replicas:  new(int32(3)),
 						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "group2_c"}}},
 						},
@@ -157,7 +156,7 @@ func TestPodSets(t *testing.T) {
 					},
 					rayv1.WorkerGroupSpec{
 						GroupName: "group2",
-						Replicas:  ptr.To[int32](3),
+						Replicas:  new(int32(3)),
 						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "group2_c"}}},
 						},
@@ -206,7 +205,7 @@ func TestPodSets(t *testing.T) {
 					},
 					rayv1.WorkerGroupSpec{
 						GroupName: "group2",
-						Replicas:  ptr.To[int32](3),
+						Replicas:  new(int32(3)),
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Annotations: map[string]string{
@@ -265,7 +264,7 @@ func TestPodSets(t *testing.T) {
 					},
 					rayv1.WorkerGroupSpec{
 						GroupName: "group2",
-						Replicas:  ptr.To[int32](3),
+						Replicas:  new(int32(3)),
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Annotations: map[string]string{
@@ -313,7 +312,7 @@ func TestPodSets(t *testing.T) {
 				WithWorkerGroups(
 					rayv1.WorkerGroupSpec{
 						GroupName: "group1",
-						Replicas:  ptr.To[int32](3),
+						Replicas:  new(int32(3)),
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Annotations: map[string]string{
@@ -362,7 +361,7 @@ func TestPodSets(t *testing.T) {
 				WithWorkerGroups(
 					rayv1.WorkerGroupSpec{
 						GroupName: "group1",
-						Replicas:  ptr.To[int32](3),
+						Replicas:  new(int32(3)),
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Annotations: map[string]string{
@@ -429,7 +428,7 @@ func TestPodSets(t *testing.T) {
 					},
 					rayv1.WorkerGroupSpec{
 						GroupName:  "group2",
-						Replicas:   ptr.To[int32](3),
+						Replicas:   new(int32(3)),
 						NumOfHosts: 4,
 						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "group2_c"}}},
@@ -471,7 +470,7 @@ func TestPodSets(t *testing.T) {
 					},
 					rayv1.WorkerGroupSpec{
 						GroupName: "group2",
-						Replicas:  ptr.To[int32](3),
+						Replicas:  new(int32(3)),
 						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "group2_c"}}},
 						},
@@ -515,7 +514,7 @@ func TestPodSets(t *testing.T) {
 					},
 					rayv1.WorkerGroupSpec{
 						GroupName: "group2",
-						Replicas:  ptr.To[int32](3),
+						Replicas:  new(int32(3)),
 						Template: corev1.PodTemplateSpec{
 							Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "group2_c"}}},
 						},
@@ -901,10 +900,73 @@ func TestNodeSelectors(t *testing.T) {
 
 			if tc.wantRunError == nil {
 				genJob.Suspend()
-				genJob.RestorePodSetsInfo(tc.restoreInfo)
+				genJob.RestorePodSetsInfo(t.Context(), tc.restoreInfo)
 				if diff := cmp.Diff(tc.wantFinal, tc.job); diff != "" {
 					t.Errorf("Unexpected job after restore (-want/+got): %s", diff)
 				}
+			}
+		})
+	}
+}
+
+func TestRestorePodSetsInfo(t *testing.T) {
+	// head + 2 worker groups => ExpectedPodSetsCount is 3; with K8sJobMode a
+	// submitter pod set is appended, so the expected length becomes 4.
+	baseJob := testingrayutil.MakeJob("rayjob", "ns").
+		WithHeadGroupSpec(rayv1.HeadGroupSpec{Template: corev1.PodTemplateSpec{
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "head", Image: "ray:latest"}}},
+		}}).
+		WithWorkerGroups(
+			rayv1.WorkerGroupSpec{GroupName: "group1", Template: corev1.PodTemplateSpec{}},
+			rayv1.WorkerGroupSpec{GroupName: "group2", Template: corev1.PodTemplateSpec{}},
+		)
+
+	testCases := map[string]struct {
+		job         *rayv1.RayJob
+		podSetsInfo []podset.PodSetInfo
+		wantChanged bool
+	}{
+		"fewer podSetsInfo than expected is a no-op": {
+			job:         baseJob.Clone().Obj(),
+			podSetsInfo: []podset.PodSetInfo{{}, {}},
+			wantChanged: false,
+		},
+		"more podSetsInfo than expected is a no-op": {
+			job:         baseJob.Clone().Obj(),
+			podSetsInfo: []podset.PodSetInfo{{}, {}, {}, {}},
+			wantChanged: false,
+		},
+		"matching length without submitter restores pod sets": {
+			job: baseJob.Clone().Obj(),
+			podSetsInfo: []podset.PodSetInfo{
+				{NodeSelector: map[string]string{"restored": "true"}},
+				{NodeSelector: map[string]string{"restored": "true"}},
+				{NodeSelector: map[string]string{"restored": "true"}},
+			},
+			wantChanged: true,
+		},
+		"K8sJobMode with a missing submitter pod set is a no-op": {
+			job:         baseJob.Clone().WithSubmissionMode(rayv1.K8sJobMode).Obj(),
+			podSetsInfo: []podset.PodSetInfo{{}, {}, {}},
+			wantChanged: false,
+		},
+		"K8sJobMode with matching length restores pod sets including the submitter": {
+			job: baseJob.Clone().WithSubmissionMode(rayv1.K8sJobMode).Obj(),
+			podSetsInfo: []podset.PodSetInfo{
+				{NodeSelector: map[string]string{"restored": "true"}},
+				{NodeSelector: map[string]string{"restored": "true"}},
+				{NodeSelector: map[string]string{"restored": "true"}},
+				{NodeSelector: map[string]string{"restored": "true"}},
+			},
+			wantChanged: true,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			genJob := (*RayJob)(tc.job)
+			if gotChanged := genJob.RestorePodSetsInfo(t.Context(), tc.podSetsInfo); gotChanged != tc.wantChanged {
+				t.Errorf("RestorePodSetsInfo() = %v, want %v", gotChanged, tc.wantChanged)
 			}
 		})
 	}
@@ -986,6 +1048,50 @@ func Test_RayJobFinished(t *testing.T) {
 	}
 }
 
+func Test_RayJobIsOnHold(t *testing.T) {
+	testcases := []struct {
+		name                string
+		jobDeploymentStatus rayv1.JobDeploymentStatus
+		expectedOnHold      bool
+	}{
+		{
+			name:                "jobDeploymentStatus=Running",
+			jobDeploymentStatus: rayv1.JobDeploymentStatusRunning,
+			expectedOnHold:      false,
+		},
+		{
+			name:                "jobDeploymentStatus=Complete",
+			jobDeploymentStatus: rayv1.JobDeploymentStatusComplete,
+			expectedOnHold:      false,
+		},
+		{
+			name:                "jobDeploymentStatus=Failed",
+			jobDeploymentStatus: rayv1.JobDeploymentStatusFailed,
+			expectedOnHold:      false,
+		},
+		{
+			name:                "jobDeploymentStatus=ValidationFailed",
+			jobDeploymentStatus: rayv1.JobDeploymentStatusValidationFailed,
+			expectedOnHold:      true,
+		},
+	}
+
+	for _, testcase := range testcases {
+		t.Run(testcase.name, func(t *testing.T) {
+			rayJob := testingrayutil.MakeJob("job", "ns").Obj()
+			rayJob.Status.JobDeploymentStatus = testcase.jobDeploymentStatus
+
+			onHold := ((*RayJob)(rayJob)).IsOnHold()
+
+			if onHold != testcase.expectedOnHold {
+				t.Logf("actual onHold: %v", onHold)
+				t.Logf("expected onHold: %v", testcase.expectedOnHold)
+				t.Error("unexpected result for 'onHold'")
+			}
+		})
+	}
+}
+
 func TestGetCustomAnnotations(t *testing.T) {
 	headSpec := rayv1.HeadGroupSpec{
 		Template: corev1.PodTemplateSpec{
@@ -1019,15 +1125,13 @@ func TestGetCustomAnnotations(t *testing.T) {
 				WithWorkerGroups(workerGroup("group1", 5)).
 				Obj(),
 			wantCustomAnnotation: map[string]string{
-				raycluster.RayClusterGenerationAnnotation:         "0",
-				raycluster.RayClusterPodsetReplicaSizesAnnotation: `[{"name":"head","count":1},{"name":"group1","count":5}]`,
+				raycluster.RayClusterGenerationAnnotation: "0",
 			},
 			wantGroupCount: 5,
 		},
 		"skip patch when annotation already matches": {
 			rayJob: testingrayutil.MakeJob("rayjob", "ns").
 				Annotation(workloadslicing.EnabledAnnotationKey, workloadslicing.EnabledAnnotationValue).
-				Annotation(raycluster.RayClusterPodsetReplicaSizesAnnotation, `[{"name":"head","count":1},{"name":"group1","count":5}]`).
 				WithHeadGroupSpec(headSpec).
 				WithWorkerGroups(workerGroup("group1", 1)).
 				WithEnableAutoscaling(new(true)).
@@ -1036,15 +1140,13 @@ func TestGetCustomAnnotations(t *testing.T) {
 				WithWorkerGroups(workerGroup("group1", 5)).
 				Obj(),
 			wantCustomAnnotation: map[string]string{
-				raycluster.RayClusterGenerationAnnotation:         "0",
-				raycluster.RayClusterPodsetReplicaSizesAnnotation: `[{"name":"head","count":1},{"name":"group1","count":5}]`,
+				raycluster.RayClusterGenerationAnnotation: "0",
 			},
 			wantGroupCount: 5,
 		},
 		"annotation updated after scale-down": {
 			rayJob: testingrayutil.MakeJob("rayjob", "ns").
 				Annotation(workloadslicing.EnabledAnnotationKey, workloadslicing.EnabledAnnotationValue).
-				Annotation(raycluster.RayClusterPodsetReplicaSizesAnnotation, `[{"name":"head","count":1},{"name":"group1","count":6}]`).
 				WithHeadGroupSpec(headSpec).
 				WithWorkerGroups(workerGroup("group1", 4)).
 				WithEnableAutoscaling(new(true)).
@@ -1053,15 +1155,13 @@ func TestGetCustomAnnotations(t *testing.T) {
 				WithWorkerGroups(workerGroup("group1", 4)).
 				Obj(),
 			wantCustomAnnotation: map[string]string{
-				raycluster.RayClusterGenerationAnnotation:         "0",
-				raycluster.RayClusterPodsetReplicaSizesAnnotation: `[{"name":"head","count":1},{"name":"group1","count":4}]`,
+				raycluster.RayClusterGenerationAnnotation: "0",
 			},
 			wantGroupCount: 4,
 		},
 		"annotation updated when podset count differs from annotation length": {
 			rayJob: testingrayutil.MakeJob("rayjob", "ns").
 				Annotation(workloadslicing.EnabledAnnotationKey, workloadslicing.EnabledAnnotationValue).
-				Annotation(raycluster.RayClusterPodsetReplicaSizesAnnotation, `[{"name":"group1","count":5}]`).
 				WithHeadGroupSpec(headSpec).
 				WithWorkerGroups(workerGroup("group1", 1)).
 				WithEnableAutoscaling(new(true)).
@@ -1070,8 +1170,7 @@ func TestGetCustomAnnotations(t *testing.T) {
 				WithWorkerGroups(workerGroup("group1", 5)).
 				Obj(),
 			wantCustomAnnotation: map[string]string{
-				raycluster.RayClusterGenerationAnnotation:         "0",
-				raycluster.RayClusterPodsetReplicaSizesAnnotation: `[{"name":"head","count":1},{"name":"group1","count":5}]`,
+				raycluster.RayClusterGenerationAnnotation: "0",
 			},
 			wantGroupCount: 5,
 		},
@@ -1104,7 +1203,7 @@ func TestGetCustomAnnotations(t *testing.T) {
 			}
 
 			// Verify GetCustomAnnotations returns the expected annotations
-			gotAnnotations, err := job.GetCustomAnnotations(ctx, fakeClient, podSets)
+			gotAnnotations, err := job.GetCustomAnnotations(ctx, fakeClient)
 			if err != nil {
 				t.Fatalf("unexpected error from GetCustomAnnotations: %v", err)
 			}

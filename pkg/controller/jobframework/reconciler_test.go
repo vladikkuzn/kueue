@@ -19,6 +19,8 @@ package jobframework_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -30,9 +32,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/component-base/featuregate"
 	"k8s.io/utils/clock"
 	testingclock "k8s.io/utils/clock/testing"
@@ -49,6 +54,7 @@ import (
 	kueueconstants "sigs.k8s.io/kueue/pkg/constants"
 	"sigs.k8s.io/kueue/pkg/controller/constants"
 	"sigs.k8s.io/kueue/pkg/controller/core/indexer"
+	"sigs.k8s.io/kueue/pkg/controller/jobs"
 	"sigs.k8s.io/kueue/pkg/controller/jobs/job"
 	"sigs.k8s.io/kueue/pkg/features"
 	"sigs.k8s.io/kueue/pkg/podset"
@@ -61,8 +67,6 @@ import (
 	"sigs.k8s.io/kueue/pkg/util/testingjobs/jobset"
 	testingmpijob "sigs.k8s.io/kueue/pkg/util/testingjobs/mpijob"
 	"sigs.k8s.io/kueue/pkg/workloadslicing"
-
-	_ "sigs.k8s.io/kueue/pkg/controller/jobs"
 
 	. "sigs.k8s.io/kueue/pkg/controller/jobframework"
 )
@@ -87,16 +91,20 @@ func TestReconcileGenericJob(t *testing.T) {
 		Queue(testLocalQueueName).
 		PodSets(basePodSets...).
 		Priority(0)
+	// No pod set assignments, so equivalence compares against the workload spec.
+	reservedIn := &kueue.Admission{ClusterQueue: "cq"}
+	reservedAt := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 
 	testCases := map[string]struct {
-		featureGates  map[featuregate.Feature]bool
-		req           types.NamespacedName
-		job           *batchv1.Job
-		podSets       []kueue.PodSet
-		objs          []client.Object
-		wantWorkloads []kueue.Workload
-		wantEvents    []utiltesting.EventRecord
-		wantPodSets   []podset.PodSetInfo
+		featureGates      map[featuregate.Feature]bool
+		reconcilerOptions []Option
+		req               types.NamespacedName
+		job               *batchv1.Job
+		podSets           []kueue.PodSet
+		objs              []client.Object
+		wantWorkloads     []kueue.Workload
+		wantEvents        []utiltesting.EventRecord
+		wantPodSets       []podset.PodSetInfo
 	}{
 		"handle job with no workload (elasticJobsViaWorkloadSlicesEnabled = false)": {
 			featureGates: map[featuregate.Feature]bool{features.ElasticJobsViaWorkloadSlices: false},
@@ -382,7 +390,7 @@ func TestReconcileGenericJob(t *testing.T) {
 								Name:          "main",
 								Flavors:       nil,
 								ResourceUsage: nil,
-								Count:         ptr.To[int32](1),
+								Count:         new(int32(1)),
 							},
 						},
 					}).
@@ -406,6 +414,154 @@ func TestReconcileGenericJob(t *testing.T) {
 					Tolerations:     nil,
 					SchedulingGates: nil,
 				},
+			},
+		},
+		"handle job with annotations to copy": {
+			featureGates: map[featuregate.Feature]bool{
+				features.CustomMetricLabels: true,
+			},
+			reconcilerOptions: []Option{
+				WithLabelKeysToCopy(sets.New("toCopyKey")),
+				WithAnnotationsToCopy(sets.New("toCopyAnnotation")),
+			},
+			req: baseReq,
+			job: baseJob.Clone().
+				Label("toCopyKey", "toCopyValue").
+				Label("dontCopyKey", "dontCopyValue").
+				SetAnnotation("toCopyAnnotation", "toCopyAnnValue").
+				SetAnnotation("dontCopyAnnotation", "dontCopyAnnValue").
+				Obj(),
+			podSets: basePodSets,
+			wantWorkloads: []kueue.Workload{
+				*baseWl.Clone().
+					Name("job-test-job-ce737").
+					Label("toCopyKey", "toCopyValue").
+					Annotations(map[string]string{"toCopyAnnotation": "toCopyAnnValue"}).
+					Obj(),
+			},
+		},
+		"setup workload annotations for pods": {
+			featureGates: map[featuregate.Feature]bool{
+				features.SchedulerLibraryIntegration: true,
+				features.TopologyAwareScheduling:     false,
+			},
+			req:     baseReq,
+			job:     baseJob.Clone().Obj(),
+			podSets: basePodSets,
+			objs: []client.Object{
+				baseWl.Clone().Name("job-test-job-1").
+					Conditions(metav1.Condition{
+						Type:   kueue.WorkloadQuotaReserved,
+						Status: metav1.ConditionTrue,
+					}, metav1.Condition{
+						Type:   kueue.WorkloadAdmitted,
+						Status: metav1.ConditionTrue,
+					}).
+					Admission(&kueue.Admission{
+						ClusterQueue: "default-cq",
+						PodSetAssignments: []kueue.PodSetAssignment{
+							{
+								Name:  "main",
+								Count: new(int32(1)),
+							},
+						},
+					}).
+					Obj(),
+			},
+			wantWorkloads: []kueue.Workload{
+				*baseWl.Clone().Name("job-test-job-1").
+					Conditions(metav1.Condition{
+						Type:   kueue.WorkloadQuotaReserved,
+						Status: metav1.ConditionTrue,
+					}, metav1.Condition{
+						Type:   kueue.WorkloadAdmitted,
+						Status: metav1.ConditionTrue,
+					}).
+					Admission(&kueue.Admission{
+						ClusterQueue: "default-cq",
+						PodSetAssignments: []kueue.PodSetAssignment{
+							{
+								Name:  "main",
+								Count: new(int32(1)),
+							},
+						},
+					}).
+					Obj(),
+			},
+			wantPodSets: []podset.PodSetInfo{
+				{
+					Name:  "main",
+					Count: 1,
+					Annotations: map[string]string{
+						kueue.WorkloadAnnotation: "job-test-job-1",
+					},
+					Labels: map[string]string{
+						kueueconstants.ClusterQueueLabel: "default-cq",
+						kueueconstants.LocalQueueLabel:   "test-lq",
+						kueueconstants.PodSetLabel:       "main",
+					},
+					NodeSelector: map[string]string{},
+				},
+			},
+		},
+		// Group and kind are frozen while quota is reserved.
+		"quota-reserved workload is not moved onto a pod priority class": {
+			req: baseReq,
+			job: baseJob.DeepCopy(),
+			podSets: []kueue.PodSet{
+				*utiltestingapi.MakePodSet("main", 1).PriorityClass("podpc").Obj(),
+			},
+			objs: []client.Object{
+				&schedulingv1.PriorityClass{ObjectMeta: metav1.ObjectMeta{Name: "podpc"}, Value: 50},
+				baseWl.Clone().Name("job-test-job-1").
+					PodSets(*utiltestingapi.MakePodSet("main", 1).PriorityClass("podpc").Obj()).
+					WorkloadPriorityClassRef("high").Priority(100).
+					ReserveQuotaAt(reservedIn, reservedAt).
+					Obj(),
+			},
+			wantWorkloads: []kueue.Workload{
+				*baseWl.Clone().Name("job-test-job-1").
+					PodSets(*utiltestingapi.MakePodSet("main", 1).PriorityClass("podpc").Obj()).
+					WorkloadPriorityClassRef("high").Priority(100).
+					ReserveQuotaAt(reservedIn, reservedAt).
+					Obj(),
+			},
+		},
+		// A nil resolved ref is a removal, frozen while quota is reserved.
+		"quota-reserved workload keeps its priority class when the owner's stops resolving": {
+			req:     baseReq,
+			job:     baseJob.DeepCopy(),
+			podSets: basePodSets,
+			objs: []client.Object{
+				baseWl.Clone().Name("job-test-job-1").
+					WorkloadPriorityClassRef("high").Priority(100).
+					ReserveQuotaAt(reservedIn, reservedAt).
+					Obj(),
+			},
+			wantWorkloads: []kueue.Workload{
+				*baseWl.Clone().Name("job-test-job-1").
+					WorkloadPriorityClassRef("high").Priority(100).
+					ReserveQuotaAt(reservedIn, reservedAt).
+					Obj(),
+			},
+		},
+		// Same group and kind, so the rename is legal while reserved.
+		"quota-reserved workload follows the owner to another workload priority class": {
+			req:     baseReq,
+			job:     baseJob.Clone().WorkloadPriorityClass("low").Obj(),
+			podSets: basePodSets,
+			objs: []client.Object{
+				utiltestingapi.MakeWorkloadPriorityClass("low").PriorityValue(10).Obj(),
+				baseWl.Clone().Name("job-test-job-1").
+					WorkloadPriorityClassRef("high").Priority(100).
+					ReserveQuotaAt(reservedIn, reservedAt).
+					Obj(),
+			},
+			wantWorkloads: []kueue.Workload{
+				*baseWl.Clone().Name("job-test-job-1").ResourceVersion("2").
+					WorkloadPriorityClassRef("low").Priority(10).
+					ReserveQuotaAt(reservedIn, reservedAt).
+					Obj(),
 			},
 		},
 	}
@@ -433,7 +589,7 @@ func TestReconcileGenericJob(t *testing.T) {
 				Build()
 
 			recorder := &utiltesting.EventRecorder{}
-			rec := NewReconciler(cl, recorder)
+			rec := NewReconciler(cl, recorder, tc.reconcilerOptions...)
 			_, err := rec.ReconcileGenericJob(ctx, controllerruntime.Request{NamespacedName: tc.req}, mgj)
 			if err != nil {
 				t.Fatalf("Failed to Reconcile GenericJob: %v", err)
@@ -650,6 +806,7 @@ func TestFindAncestorJobManagedByKueue(t *testing.T) {
 					Obj(),
 			},
 			job: testingjob.MakeJob(childJobName, jobNamespace).
+				UID(childJobName).
 				OwnerReference(parentJobName, kfmpi.SchemeGroupVersionKind).
 				Obj(),
 			wantErr: ErrCyclicOwnership,
@@ -856,6 +1013,7 @@ func TestFindAncestorJobManagedByKueue(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "cronjob",
 						Namespace: jobNamespace,
+						UID:       "cronjob",
 						OwnerReferences: []metav1.OwnerReference{{
 							Name:       "aw",
 							APIVersion: awv1beta2.GroupVersion.String(),
@@ -871,6 +1029,24 @@ func TestFindAncestorJobManagedByKueue(t *testing.T) {
 				Obj(),
 			wantManaged: testingaw.MakeAppWrapper("aw", jobNamespace).UID("aw").Queue("test-q").Obj(),
 		},
+		"child job has ownerReference whose UID does not match the referenced object => nil": {
+			integrations: []string{"kubeflow.org/mpijob"},
+			ancestors: []client.Object{
+				testingmpijob.MakeMPIJob(parentJobName, jobNamespace).
+					UID(parentJobName).
+					Queue("test-q").
+					Obj(),
+			},
+			job: func() client.Object {
+				job := testingjob.MakeJob(childJobName, jobNamespace).
+					OwnerReference(parentJobName, kfmpi.SchemeGroupVersionKind).
+					Obj()
+				// Point owner reference at the real parent by name with a mismatched UID.
+				job.OwnerReferences[0].UID = "forged-uid"
+				return job
+			}(),
+			wantManaged: nil,
+		},
 		"Pod -> ReplicaSet -> Deployment (queue-name) => Deployment": {
 			integrations: []string{"pod", "deployment"},
 			ancestors: []client.Object{
@@ -879,6 +1055,7 @@ func TestFindAncestorJobManagedByKueue(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "rs",
 						Namespace: jobNamespace,
+						UID:       "rs",
 						OwnerReferences: []metav1.OwnerReference{{
 							Name:       "deploy",
 							APIVersion: appsv1.SchemeGroupVersion.String(),
@@ -897,8 +1074,9 @@ func TestFindAncestorJobManagedByKueue(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			t.Cleanup(EnableIntegrationsForTest(t, tc.integrations...))
-			t.Cleanup(EnableExternalIntegrationsForTest(t, tc.externalFrameworks...))
+			integrationManager := jobs.NewIntegrationManager()
+			t.Cleanup(integrationManager.EnableIntegrationsForTest(t, tc.integrations...))
+			t.Cleanup(integrationManager.EnableExternalIntegrationsForTest(t, tc.externalFrameworks...))
 			ctx, _ := utiltesting.ContextWithLog(t)
 			recorder := &utiltesting.EventRecorder{}
 			builder := utiltesting.NewClientBuilder(kfmpi.AddToScheme, awv1beta2.AddToScheme, v1alpha2.AddToScheme)
@@ -907,7 +1085,7 @@ func TestFindAncestorJobManagedByKueue(t *testing.T) {
 				builder = builder.WithObjects(tc.job)
 			}
 			cl := builder.Build()
-			gotManaged, gotErr := FindAncestorJobManagedByKueue(ctx, cl, tc.job, tc.manageJobsWithoutQueueName)
+			gotManaged, gotErr := integrationManager.FindAncestorJobManagedByKueue(ctx, cl, tc.job, tc.manageJobsWithoutQueueName)
 			if diff := cmp.Diff(tc.wantManaged, gotManaged, cmp.Options{
 				cmpopts.IgnoreFields(metav1.ObjectMeta{}, "ResourceVersion"),
 				cmpopts.EquateEmpty(),
@@ -935,7 +1113,8 @@ func TestProcessOptions(t *testing.T) {
 				WithManageJobsWithoutQueueName(true),
 				WithWaitForPodsReady(&configapi.WaitForPodsReady{}),
 				WithKubeServerVersion(&kubeversion.ServerVersionFetcher{}),
-				WithLabelKeysToCopy([]string{"toCopyKey"}),
+				WithLabelKeysToCopy(sets.New("toCopyKey")),
+				WithAnnotationsToCopy(sets.New("toCopyAnnotation")),
 				WithClock(fakeClock),
 			},
 			wantOpts: Options{
@@ -943,7 +1122,8 @@ func TestProcessOptions(t *testing.T) {
 				WaitForPodsReady:           true,
 				KubeServerVersion:          &kubeversion.ServerVersionFetcher{},
 				IntegrationOptions:         nil,
-				LabelKeysToCopy:            []string{"toCopyKey"},
+				LabelKeysToCopy:            sets.New("toCopyKey"),
+				AnnotationsToCopy:          sets.New("toCopyAnnotation"),
 				Clock:                      fakeClock,
 			},
 		},
@@ -966,6 +1146,7 @@ func TestProcessOptions(t *testing.T) {
 				KubeServerVersion:          nil,
 				IntegrationOptions:         nil,
 				LabelKeysToCopy:            nil,
+				AnnotationsToCopy:          nil,
 				Clock:                      clock.RealClock{},
 			},
 		},
@@ -978,6 +1159,24 @@ func TestProcessOptions(t *testing.T) {
 				t.Errorf("Unexpected error from ProcessOptions (-want,+got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestProcessOptionsWithIntegrationManager(t *testing.T) {
+	manager := NewIntegrationManager()
+
+	options := ProcessOptions(WithIntegrationManager(manager))
+
+	if options.IntegrationManager != manager {
+		t.Error("ProcessOptions() did not preserve the integration manager")
+	}
+}
+
+func TestNewReconcilerInitializesIntegrationManager(t *testing.T) {
+	reconciler := NewReconciler(nil, nil)
+	integrationManager := reflect.ValueOf(reconciler).Elem().FieldByName("integrationManager")
+	if integrationManager.IsNil() {
+		t.Error("NewReconciler() integrationManager is nil")
 	}
 }
 
@@ -1069,6 +1268,45 @@ func TestReconcileGenericJobWithWaitForPodsReady(t *testing.T) {
 				Obj()),
 			wantError: nil,
 		},
+		"update podready condition recovery success": {
+			workload: utiltestingapi.MakeWorkload("job-test-job-podready-recovery", metav1.NamespaceDefault).
+				Finalizers(kueue.ResourceInUseFinalizerName).
+				Label(constants.JobUIDLabel, "job-test-job-podready-recovery").
+				ControllerReference(testGVK, "test-job-podready-recovery", "test-job-podready-recovery").
+				Queue(testLocalQueueName).
+				PodSets(*utiltestingapi.MakePodSet("main", 1).Obj()).
+				Conditions(metav1.Condition{
+					Type:               kueue.WorkloadAdmitted,
+					Status:             metav1.ConditionTrue,
+					Reason:             "Admitted",
+					Message:            "The workload is admitted",
+					LastTransitionTime: metav1.NewTime(time.Now()),
+				}, metav1.Condition{
+					Type:               kueue.WorkloadPodsReady,
+					Status:             metav1.ConditionFalse,
+					Reason:             kueue.WorkloadWaitForRecovery,
+					Message:            "Not all pods are ready or succeeded",
+					LastTransitionTime: metav1.NewTime(time.Now()),
+				}).
+				Admission(&kueue.Admission{
+					ClusterQueue: "default-cq",
+				}).
+				Obj(),
+			job: (*job.Job)(testingjob.MakeJob("test-job-podready-recovery", metav1.NamespaceDefault).
+				UID("test-job-podready-recovery").
+				Label(constants.QueueLabel, string(testLocalQueueName)).
+				Parallelism(1).
+				Suspend(false).
+				Containers(corev1.Container{
+					Name: "c",
+					Resources: corev1.ResourceRequirements{
+						Requests: make(corev1.ResourceList),
+					},
+				}).
+				Ready(1).
+				Obj()),
+			wantError: nil,
+		},
 	}
 
 	for name, tc := range testCases {
@@ -1109,6 +1347,226 @@ func TestReconcileGenericJobWithWaitForPodsReady(t *testing.T) {
 				}}, tc.job)
 			if !errors.Is(err, tc.wantError) {
 				t.Errorf("unexpected reconcile error want %s got %s)", tc.wantError, err)
+			}
+		})
+	}
+}
+
+func TestReconcileGenericJob_EvictionClearsQuotaReservation(t *testing.T) {
+	scenarios := []map[featuregate.Feature]bool{
+		{
+			features.UnadmittedWorkloadsObservability: false,
+		},
+		{
+			features.UnadmittedWorkloadsObservability: true,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(fmt.Sprintf("UnadmittedWorkloadsObservability enabled: %t", scenario[features.UnadmittedWorkloadsObservability]), func(t *testing.T) {
+			features.SetFeatureGatesDuringTest(t, scenario)
+			ctx, _ := utiltesting.ContextWithLog(t)
+			mockctrl := gomock.NewController(t)
+
+			podSets := []kueue.PodSet{
+				*utiltestingapi.MakePodSet("main", 1).Obj(),
+			}
+
+			job := testingjob.MakeJob("job-1", "ns").Queue("cq").UID("job-1").Suspend(true).Obj()
+
+			wl := utiltestingapi.MakeWorkload("job-1", "ns").
+				PodSets(podSets...).
+				ReserveQuotaAt(utiltestingapi.MakeAdmission("cq").Obj(), time.Now()).
+				Condition(metav1.Condition{
+					Type:   kueue.WorkloadEvicted,
+					Status: metav1.ConditionTrue,
+					Reason: kueue.WorkloadEvictedByPreemption,
+				}).
+				ControllerReference(batchv1.SchemeGroupVersion.WithKind("Job"), "job-1", "job-1").
+				Obj()
+
+			mgj := mocks.NewMockGenericJob(mockctrl)
+			mgj.EXPECT().Object().Return(job).AnyTimes()
+			mgj.EXPECT().GVK().Return(batchv1.SchemeGroupVersion.WithKind("Job")).AnyTimes()
+			mgj.EXPECT().IsSuspended().Return(true).AnyTimes()
+			mgj.EXPECT().IsActive().Return(false).AnyTimes()
+			mgj.EXPECT().Finished(gomock.Any()).Return("", false, false).AnyTimes()
+			mgj.EXPECT().PodSets(gomock.Any(), gomock.Any()).Return(podSets, nil).AnyTimes()
+
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns"}}
+			gvk := batchv1.SchemeGroupVersion.WithKind("Job")
+			clientBuilder := utiltesting.NewClientBuilder().
+				WithObjects(job, wl, ns).
+				WithStatusSubresource(job, wl).
+				WithIndex(&kueue.Workload{}, indexer.OwnerReferenceIndexKey(gvk), indexer.WorkloadOwnerIndexFunc(gvk))
+			cl := clientBuilder.Build()
+
+			recorder := &utiltesting.EventRecorder{}
+			r := NewReconciler(cl, recorder)
+
+			req := controllerruntime.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "job-1"}}
+			_, err := r.ReconcileGenericJob(ctx, req, mgj)
+			if err != nil {
+				t.Fatalf("ReconcileGenericJob() error: %v", err)
+			}
+
+			var gotWl kueue.Workload
+			if err := cl.Get(ctx, types.NamespacedName{Namespace: "ns", Name: "job-1"}, &gotWl); err != nil {
+				t.Fatalf("failed to get workload: %v", err)
+			}
+
+			wantReason := kueue.WorkloadPending //nolint:staticcheck // SA1019: fallback
+			if scenario[features.UnadmittedWorkloadsObservability] {
+				wantReason = kueue.WorkloadQuotaReservedReasonPendingEvaluation
+			}
+
+			cond := apimeta.FindStatusCondition(gotWl.Status.Conditions, kueue.WorkloadQuotaReserved)
+			if cond == nil {
+				t.Fatalf("QuotaReserved condition not found")
+			}
+			if cond.Status != metav1.ConditionFalse || cond.Reason != wantReason {
+				t.Errorf("Unexpected QuotaReserved condition status/reason: got %s/%s, want False/%s", cond.Status, cond.Reason, wantReason)
+			}
+		})
+	}
+}
+
+func TestConstructWorkloadForPartialScaleUp(t *testing.T) {
+	features.SetFeatureGateDuringTest(t, features.ElasticJobsViaWorkloadSlices, true)
+	features.SetFeatureGateDuringTest(t, features.ElasticJobsViaWorkloadSlicesWithPartialReplicaScaleUp, true)
+
+	ctx, _ := utiltesting.ContextWithLog(t)
+	gvk := batchv1.SchemeGroupVersion.WithKind("Job")
+	now := time.Now()
+
+	job := testingjob.MakeJob("job-multi", "ns").
+		SetAnnotation(workloadslicing.EnabledAnnotationKey, workloadslicing.EnabledAnnotationValue).
+		SetAnnotation(kueueconstants.ElasticJobScaleUpStrategyAnnotationKey, kueueconstants.ElasticJobScaleUpStrategyPartial).
+		Queue("cq").
+		UID("job-uid-multi").
+		Obj()
+
+	prevWl := utiltestingapi.MakeWorkload("job-multi-prev", "ns").
+		PodSets(
+			kueue.PodSet{Name: kueue.PodSetReference("head"), Count: 1},
+			kueue.PodSet{Name: kueue.PodSetReference("workers-reservation"), Count: 2},
+			kueue.PodSet{Name: kueue.PodSetReference("workers-spot"), Count: 10},
+		).
+		ReserveQuotaAt(utiltestingapi.MakeAdmission("cq").PodSets(
+			utiltestingapi.MakePodSetAssignment(kueue.PodSetReference("head")).
+				Assignment(corev1.ResourceCPU, "default", "1").
+				Count(1).
+				Obj(),
+			utiltestingapi.MakePodSetAssignment(kueue.PodSetReference("workers-reservation")).
+				Assignment(corev1.ResourceCPU, "default", "1").
+				Count(1).
+				Obj(),
+			utiltestingapi.MakePodSetAssignment(kueue.PodSetReference("workers-spot")).
+				Assignment(corev1.ResourceCPU, "default", "1").
+				Count(4).
+				Obj(),
+		).Obj(), now).
+		ControllerReference(gvk, "job-multi", "job-uid-multi").
+		Obj()
+
+	cases := map[string]struct {
+		job              client.Object
+		podSets          []kueue.PodSet
+		existingObjects  []client.Object
+		wantCounts       map[kueue.PodSetReference]int32
+		wantMinCounts    map[kueue.PodSetReference]*int32
+		wantDiffNameFrom *kueue.Workload
+	}{
+		"initial creation without previous admitted workload": {
+			job: job,
+			podSets: []kueue.PodSet{
+				{Name: kueue.PodSetReference("head"), Count: 1},
+				{Name: kueue.PodSetReference("workers-reservation"), Count: 4, MinCount: new(int32(4))},
+				{Name: kueue.PodSetReference("workers-spot"), Count: 20, MinCount: new(int32(20))},
+			},
+			wantCounts: map[kueue.PodSetReference]int32{
+				kueue.PodSetReference("head"):                1,
+				kueue.PodSetReference("workers-reservation"): 4,
+				kueue.PodSetReference("workers-spot"):        20,
+			},
+			wantMinCounts: map[kueue.PodSetReference]*int32{
+				kueue.PodSetReference("head"):                nil,
+				kueue.PodSetReference("workers-reservation"): new(int32(4)),
+				kueue.PodSetReference("workers-spot"):        new(int32(20)),
+			},
+		},
+		"scale-up with previous admitted workload sets minCount and probe extra": {
+			job: job,
+			podSets: []kueue.PodSet{
+				{Name: kueue.PodSetReference("head"), Count: 1},
+				{Name: kueue.PodSetReference("workers-reservation"), Count: 4},
+				{Name: kueue.PodSetReference("workers-spot"), Count: 20},
+			},
+			existingObjects: []client.Object{job, prevWl},
+			wantCounts: map[kueue.PodSetReference]int32{
+				kueue.PodSetReference("head"):                1,
+				kueue.PodSetReference("workers-reservation"): 4,
+				kueue.PodSetReference("workers-spot"):        20,
+			},
+			wantMinCounts: map[kueue.PodSetReference]*int32{
+				kueue.PodSetReference("head"):                nil,
+				kueue.PodSetReference("workers-reservation"): new(int32(2)),
+				kueue.PodSetReference("workers-spot"):        new(int32(5)),
+			},
+			wantDiffNameFrom: prevWl,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			mockctrl := gomock.NewController(t)
+			mgj := mocks.NewMockGenericJob(mockctrl)
+			mgj.EXPECT().Object().Return(tc.job).AnyTimes()
+			mgj.EXPECT().GVK().Return(gvk).AnyTimes()
+			mgj.EXPECT().PodSets(gomock.Any(), gomock.Any()).Return(tc.podSets, nil).AnyTimes()
+
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns"}}
+			objects := append([]client.Object{ns}, tc.existingObjects...)
+			cl := utiltesting.NewClientBuilder().
+				WithObjects(objects...).
+				WithIndex(&kueue.Workload{}, indexer.OwnerReferenceIndexKey(gvk), indexer.WorkloadOwnerIndexFunc(gvk)).
+				Build()
+
+			wl, err := ConstructWorkload(ctx, cl, mgj, nil, nil)
+			if err != nil {
+				t.Fatalf("ConstructWorkload failed: %v", err)
+			}
+			if wl == nil {
+				t.Fatal("expected non-nil workload")
+			}
+			if len(wl.Spec.PodSets) != len(tc.wantCounts) {
+				t.Fatalf("expected %d podsets, got %d", len(tc.wantCounts), len(wl.Spec.PodSets))
+			}
+			for _, ps := range wl.Spec.PodSets {
+				wantCount, expected := tc.wantCounts[ps.Name]
+				if !expected {
+					t.Errorf("unexpected podset %q in constructed workload", ps.Name)
+					continue
+				}
+				if ps.Count != wantCount {
+					t.Errorf("expected count=%d for podset %q, got %d", wantCount, ps.Name, ps.Count)
+				}
+
+				wantMin := tc.wantMinCounts[ps.Name]
+				if wantMin == nil {
+					if ps.MinCount != nil {
+						t.Errorf("expected minCount=nil for podset %q, got %d", ps.Name, *ps.MinCount)
+					}
+				} else {
+					if ps.MinCount == nil {
+						t.Errorf("expected minCount=%d for podset %q, got nil", *wantMin, ps.Name)
+					} else if *ps.MinCount != *wantMin {
+						t.Errorf("expected minCount=%d for podset %q, got %d", *wantMin, ps.Name, *ps.MinCount)
+					}
+				}
+			}
+			if tc.wantDiffNameFrom != nil && wl.Name == tc.wantDiffNameFrom.Name {
+				t.Errorf("expected workload name to differ from existing workload %q, got %q", tc.wantDiffNameFrom.Name, wl.Name)
 			}
 		})
 	}

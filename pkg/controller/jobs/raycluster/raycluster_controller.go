@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
@@ -44,16 +44,17 @@ const (
 	FrameworkName       = "ray.io/raycluster"
 )
 
-func init() {
-	utilruntime.Must(jobframework.RegisterIntegration(FrameworkName, jobframework.IntegrationCallbacks{
-		SetupIndexes:      SetupIndexes,
-		NewJob:            NewJob,
-		NewReconciler:     NewReconciler,
-		SetupWebhook:      SetupRayClusterWebhook,
-		JobType:           &rayv1.RayCluster{},
-		AddToScheme:       rayv1.AddToScheme,
-		MultiKueueAdapter: ray.NewMKAdapter(copyJobSpec, copyJobStatus, getEmptyList, gvk, getManagedBy, setManagedBy),
-	}))
+func RegisterIntegration(m *jobframework.IntegrationManager) error {
+	return m.RegisterIntegration(FrameworkName, jobframework.IntegrationCallbacks{
+		SetupIndexes:  SetupIndexes,
+		NewJob:        NewJob,
+		NewReconciler: NewReconciler,
+		SetupWebhook:  SetupRayClusterWebhook,
+		JobType:       &rayv1.RayCluster{},
+		AddToScheme:   rayv1.AddToScheme,
+		MultiKueueAdapter: ray.NewMKAdapter(copyJobSpec, copyJobStatus, getEmptyList, gvk, getManagedBy, setManagedBy,
+			ray.WithElasticReplicaSync(elasticReplicaSync())),
+	})
 }
 
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;watch;update;patch
@@ -113,7 +114,7 @@ func (j *RayCluster) RunWithPodSetsInfo(ctx context.Context, _ client.Client, po
 
 	j.Spec.Suspend = new(false)
 
-	err := UpdateRayClusterSpecToRunWithPodSetsInfo(&j.Spec, podSetsInfo)
+	err := UpdateRayClusterSpecToRunWithPodSetsInfo(ctrl.LoggerFrom(ctx), &j.Spec, podSetsInfo)
 	if err != nil {
 		return err
 	}
@@ -121,12 +122,8 @@ func (j *RayCluster) RunWithPodSetsInfo(ctx context.Context, _ client.Client, po
 	return nil
 }
 
-func (j *RayCluster) RestorePodSetsInfo(podSetsInfo []podset.PodSetInfo) bool {
-	if len(podSetsInfo) != ExpectedPodSetsCount(&j.Spec) {
-		return false
-	}
-
-	return RestorePodSetsInfo(&j.Spec, podSetsInfo)
+func (j *RayCluster) RestorePodSetsInfo(ctx context.Context, podSetsInfo []podset.PodSetInfo) bool {
+	return RestorePodSetsInfo(ctx, &j.Spec, podSetsInfo)
 }
 
 func (j *RayCluster) Finished(ctx context.Context) (message string, success, finished bool) {

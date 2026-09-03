@@ -39,6 +39,7 @@ import (
 func TestPendingWorkloadsInCQ(t *testing.T) {
 	const (
 		nsName   = "foo"
+		nsNameB  = "bar"
 		cqNameA  = "cqA"
 		lqNameA  = "lqA"
 		lqNameB  = "lqB"
@@ -293,6 +294,110 @@ func TestPendingWorkloadsInCQ(t *testing.T) {
 						Priority:               highPrio,
 						PositionInClusterQueue: 1,
 						PositionInLocalQueue:   1,
+					}},
+			},
+		},
+		"negative limit is clamped to zero and returns no workloads without panicking": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue(cqNameA).Obj(),
+			},
+			queues: []*kueue.LocalQueue{
+				utiltestingapi.MakeLocalQueue(lqNameA, nsName).ClusterQueue(cqNameA).Obj(),
+			},
+			workloads: []*kueue.Workload{
+				utiltestingapi.MakeWorkload("a", nsName).Queue(lqNameA).Priority(highPrio).Creation(now).Obj(),
+				utiltestingapi.MakeWorkload("b", nsName).Queue(lqNameA).Priority(highPrio).Creation(now.Add(time.Second)).Obj(),
+			},
+			req: &req{
+				queueName: cqNameA,
+				queryParams: &visibility.PendingWorkloadOptions{
+					Limit: -1,
+				},
+			},
+			wantResp: &resp{},
+		},
+		"excessive limit returns all pending workloads without over-allocating": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue(cqNameA).Obj(),
+			},
+			queues: []*kueue.LocalQueue{
+				utiltestingapi.MakeLocalQueue(lqNameA, nsName).ClusterQueue(cqNameA).Obj(),
+			},
+			workloads: []*kueue.Workload{
+				utiltestingapi.MakeWorkload("a", nsName).Queue(lqNameA).Priority(highPrio).Creation(now).Obj(),
+				utiltestingapi.MakeWorkload("b", nsName).Queue(lqNameA).Priority(highPrio).Creation(now.Add(time.Second)).Obj(),
+			},
+			req: &req{
+				queueName: cqNameA,
+				queryParams: &visibility.PendingWorkloadOptions{
+					Limit: 2000000000,
+				},
+			},
+			wantResp: &resp{
+				wantPendingWorkloads: []visibility.PendingWorkload{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:              "a",
+							Namespace:         nsName,
+							CreationTimestamp: metav1.NewTime(now),
+						},
+						LocalQueueName:         lqNameA,
+						Priority:               highPrio,
+						PositionInClusterQueue: 0,
+						PositionInLocalQueue:   0,
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:              "b",
+							Namespace:         nsName,
+							CreationTimestamp: metav1.NewTime(now.Add(time.Second)),
+						},
+						LocalQueueName:         lqNameA,
+						Priority:               highPrio,
+						PositionInClusterQueue: 1,
+						PositionInLocalQueue:   1,
+					}},
+			},
+		},
+		"same LocalQueue name reused across different namespaces reports position within each namespace's own LocalQueue": {
+			clusterQueues: []*kueue.ClusterQueue{
+				utiltestingapi.MakeClusterQueue(cqNameA).Obj(),
+			},
+			queues: []*kueue.LocalQueue{
+				utiltestingapi.MakeLocalQueue(lqNameA, nsName).ClusterQueue(cqNameA).Obj(),
+				utiltestingapi.MakeLocalQueue(lqNameA, nsNameB).ClusterQueue(cqNameA).Obj(),
+			},
+			workloads: []*kueue.Workload{
+				utiltestingapi.MakeWorkload("a", nsName).Queue(lqNameA).Priority(highPrio).Creation(now).Obj(),
+				utiltestingapi.MakeWorkload("b", nsNameB).Queue(lqNameA).Priority(highPrio).Creation(now.Add(time.Second)).Obj(),
+			},
+			req: &req{
+				queueName:   cqNameA,
+				queryParams: defaultQueryParams,
+			},
+			wantResp: &resp{
+				wantPendingWorkloads: []visibility.PendingWorkload{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:              "a",
+							Namespace:         nsName,
+							CreationTimestamp: metav1.NewTime(now),
+						},
+						LocalQueueName:         lqNameA,
+						Priority:               highPrio,
+						PositionInClusterQueue: 0,
+						PositionInLocalQueue:   0,
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:              "b",
+							Namespace:         nsNameB,
+							CreationTimestamp: metav1.NewTime(now.Add(time.Second)),
+						},
+						LocalQueueName:         lqNameA,
+						Priority:               highPrio,
+						PositionInClusterQueue: 1,
+						PositionInLocalQueue:   0,
 					}},
 			},
 		},

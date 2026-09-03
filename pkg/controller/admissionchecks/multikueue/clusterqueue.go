@@ -44,6 +44,7 @@ import (
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/controller/core/indexer"
 	"sigs.k8s.io/kueue/pkg/util/admissioncheck"
+	"sigs.k8s.io/kueue/pkg/util/api"
 	"sigs.k8s.io/kueue/pkg/util/roletracker"
 )
 
@@ -189,7 +190,7 @@ func (r *cqReconciler) aggregateWorkerQuotas(ctx context.Context, cq *kueue.Clus
 			ctrl.LoggerFrom(ctx).V(3).Info("Worker cluster client not found, skipping it in quota aggregation", "workerCluster", workerName)
 			continue
 		}
-		if !rc.connected.Load() {
+		if !rc.connState.isConnected() {
 			ctrl.LoggerFrom(ctx).V(3).Info("Worker cluster client not connected, skipping it in quota aggregation", "workerCluster", workerName)
 			continue
 		}
@@ -246,7 +247,7 @@ func (r *cqReconciler) updateQuotaAutomationCondition(ctx context.Context, cq *k
 		Type:               kueue.MultiKueueManagerQuotaAutomation,
 		Status:             status,
 		Reason:             reason,
-		Message:            message,
+		Message:            api.TruncateConditionMessage(message),
 		ObservedGeneration: cq.Generation,
 	}
 

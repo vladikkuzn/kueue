@@ -78,6 +78,10 @@ type Configuration struct {
 	// is exceeded, then the workload is evicted.
 	WaitForPodsReady *WaitForPodsReady `json:"waitForPodsReady,omitempty"`
 
+	// QuotaReleaseStrategy provides configuration options for controlling quota release timing.
+	// +optional
+	QuotaReleaseStrategy *QuotaReleaseStrategy `json:"quotaReleaseStrategy,omitempty"`
+
 	// ClientConnection provides additional configuration options for Kubernetes
 	// API server client.
 	ClientConnection *ClientConnection `json:"clientConnection,omitempty"`
@@ -185,10 +189,9 @@ type ControllerMetrics struct {
 	EnableClusterQueueResources bool `json:"enableClusterQueueResources,omitempty"`
 
 	// CustomLabels is a list of entries whose values will be added as extra
-	// Prometheus labels on ClusterQueue, LocalQueue, and Cohort metrics.
-	// Requires the CustomMetricLabels feature gate.
+	// Prometheus labels on supported metrics.
+	// A maximum of 6 labels are allowed per SourceKind (2 for Workloads), with up to 20 labels defined in total.
 	// +optional
-	// +kubebuilder:validation:MaxItems=8
 	CustomLabels []ControllerMetricsCustomLabel `json:"customLabels,omitempty"`
 
 	// LocalQueueMetrics is a configuration that provides LocalQueue metrics options.
@@ -196,12 +199,24 @@ type ControllerMetrics struct {
 	LocalQueueMetrics *LocalQueueMetrics `json:"localQueueMetrics,omitempty"`
 }
 
+type SourceKind string
+
+const (
+	SourceKindCohort       SourceKind = "Cohort"
+	SourceKindLocalQueue   SourceKind = "LocalQueue"
+	SourceKindClusterQueue SourceKind = "ClusterQueue"
+	SourceKindWorkload     SourceKind = "Workload"
+)
+
+const UntrackedCustomLabelValue = "kueue.x-k8s.io/_UNTRACKED_VALUE_"
+
 // ControllerMetricsCustomLabel defines a Kubernetes label or annotation to promote
 // as a Prometheus metric label with a "custom_" prefix.
 type ControllerMetricsCustomLabel struct {
-	// Name is used as a suffix to build the Prometheus label: Kueue
-	// automatically prepends "custom_" (e.g., name: "team" becomes label "custom_team").
-	// Must follow Prometheus label naming conventions: [a-zA-Z_][a-zA-Z0-9_]*.
+	// Name is the Prometheus metric label name suffix.
+	// Prepended with "custom_" to form the full Prometheus label name
+	// (e.g., "team" becomes "custom_team").
+	// Must contain only [a-zA-Z0-9_] characters and start with a letter.
 	Name string `json:"name"`
 
 	// SourceLabelKey is the Kubernetes label key to read the value from.
@@ -216,6 +231,24 @@ type ControllerMetricsCustomLabel struct {
 	// Mutually exclusive with SourceLabelKey.
 	// +optional
 	SourceAnnotationKey string `json:"sourceAnnotationKey,omitempty"`
+
+	// SourceKind is the object kind from which the label value should be sourced.
+	// Up to 2 labels are allowed for Workloads and up to 6 for other source kinds.
+	// Defaults to ClusterQueue.
+	// The possible values are:
+	// - Cohort
+	// - LocalQueue
+	// - ClusterQueue
+	// - Workload
+	// +optional
+	SourceKind *SourceKind `json:"sourceKind,omitempty"`
+
+	// TrackedValues is a list of the label's allowed values.
+	// When SourceKind is Workload, a closed list of 1-12 TrackedValues is required.
+	// Non-workload source kinds can have 0-16 TrackedValues. If the list is empty, any value is allowed.
+	// Label values not allowed by this field will be reported as "kueue.x-k8s.io/_UNTRACKED_VALUE_".
+	// +optional
+	TrackedValues []string `json:"trackedValues,omitempty"`
 }
 
 // LocalQueueMetrics defines the configuration options for local queue metrics.
@@ -270,6 +303,27 @@ type ControllerConfigurationSpec struct {
 	CacheSyncTimeout *time.Duration `json:"cacheSyncTimeout,omitempty"`
 }
 
+// QuotaReleaseStrategy defines when Kueue releases quota for a terminating workload.
+//
+// Valid values are:
+// - "OnTerminating" (default): releases quota as soon as all pods have a deletionTimestamp set.
+// - "OnTerminal": holds quota until all underlying pods have fully reached a terminal phase (Succeeded or Failed).
+//
+// +enum
+type QuotaReleaseStrategy string
+
+const (
+	// QuotaReleaseOnTerminating releases quota as soon as all pods have a
+	// deletionTimestamp set. This is the default and matches the existing
+	// behaviour of the batch/v1 Job integration.
+	QuotaReleaseOnTerminating QuotaReleaseStrategy = "OnTerminating"
+	// QuotaReleaseOnTerminal holds quota until all underlying pods
+	// have fully reached a terminal phase (Succeeded or Failed). This prevents
+	// scheduling failures for TopologyAwareScheduling (TAS) workloads where new
+	// pods cannot be placed until old pods physically release the hardware.
+	QuotaReleaseOnTerminal QuotaReleaseStrategy = "OnTerminal"
+)
+
 // WaitForPodsReady defines configuration for the Wait For Pods Ready feature,
 // which is used to ensure that all Pods are ready within the specified time.
 type WaitForPodsReady struct {
@@ -278,8 +332,9 @@ type WaitForPodsReady struct {
 	// evicted and requeued in the same cluster queue.
 	Timeout metav1.Duration `json:"timeout"`
 
-	// BlockAdmission when true, the cluster queue will block admissions for all
-	// subsequent jobs until the jobs reach the PodsReady=true condition.
+	// BlockAdmission when true, Kueue blocks admission of all workloads across
+	// all ClusterQueues until every previously-admitted workload reaches the
+	// PodsReady=true condition.
 	// Defaults to false.
 	// +optional
 	BlockAdmission *bool `json:"blockAdmission,omitempty"`
@@ -582,6 +637,11 @@ const Replace ResourceTransformationStrategy = "Replace"
 
 type ResourceTransformation struct {
 	// Input is the name of the input resource.
+	// It must not be `pods`; that exact name is reserved for Kueue's internal
+	// Pod-count accounting. A qualified name such as `example.com/pods` is allowed.
+	// Disabling the ReservedResourceNameValidation feature gate lets such a
+	// configuration load for an upgrade; flavor assignment still overwrites the
+	// key with the PodSet count.
 	Input corev1.ResourceName `json:"input"`
 
 	// Strategy specifies if the input resource should be replaced or retained.
@@ -591,11 +651,24 @@ type ResourceTransformation struct {
 	// MultiplyBy indicates the resource name requested by a workload, if
 	// specified.
 	// The requested amount of the resource is used to multiply the requested
-	// amount of the resource indicated by the "input" field.
+	// amount of the resource indicated by the "input" field when computing
+	// "outputs". It does not change the quantity retained under "input" when
+	// "strategy" is Retain.
+	// It must not be `pods`; that exact name is reserved for Kueue's internal
+	// Pod-count accounting. A qualified name such as `example.com/pods` is allowed.
+	// Disabling the ReservedResourceNameValidation feature gate lets such a
+	// configuration load for an upgrade; flavor assignment still overwrites the
+	// key with the PodSet count.
 	// +optional
 	MultiplyBy corev1.ResourceName `json:"multiplyBy,omitempty"`
 
 	// Outputs specifies the output resources and quantities per unit of input resource.
+	// An output resource name must not be `pods`; that exact name is reserved for
+	// Kueue's internal Pod-count accounting. A qualified name such as
+	// `example.com/pods` is allowed.
+	// Disabling the ReservedResourceNameValidation feature gate lets such a
+	// configuration load for an upgrade; flavor assignment still overwrites the
+	// key with the PodSet count.
 	// An empty Outputs combined with a `Replace` Strategy causes the Input resource to be ignored by Kueue.
 	Outputs corev1.ResourceList `json:"outputs,omitempty"`
 }
@@ -610,6 +683,12 @@ type DeviceClassMapping struct {
 	// and must start and end with an alphanumeric character.
 	// DNS subdomain prefixes follow the same rules as DNS labels but can contain periods.
 	// The total length must not exceed 253 characters.
+	// With KueueDRAIntegration enabled it must not be `pods`; that exact name is
+	// reserved for Kueue's internal Pod-count accounting. A qualified name such
+	// as `example.com/pods` is allowed.
+	// Disabling the ReservedResourceNameValidation feature gate lets such a
+	// configuration load for an upgrade; flavor assignment still overwrites the
+	// key with the PodSet count.
 	Name corev1.ResourceName `json:"name"`
 
 	// DeviceClassNames enumerates the DeviceClasses represented by this resource name.
@@ -623,28 +702,35 @@ type DeviceClassMapping struct {
 
 	// Sources configures resource accounting sources for this mapping.
 	// Each source defines how quota is tracked for this DeviceClass.
-	// Currently only counter sources are supported (for partitionable devices).
 	// Extended resource requests that resolve to a DeviceClass with sources
 	// configured are marked inadmissible.
-	// Requires the KueueDRAIntegrationPartitionableDevices feature gate.
+	// Counter sources require KueueDRAIntegrationPartitionableDevices (enabled by default since v0.19).
+	// Capacity sources require KueueDRAIntegrationConsumableCapacity.
 	// +optional
 	Sources []DeviceClassSourceConfig `json:"sources,omitempty"`
 }
 
 // DeviceClassSourceConfig defines a resource accounting source for a DeviceClassMapping.
-// Exactly one of the source types must be set.
+// Exactly one of the source types must be set per entry.
 type DeviceClassSourceConfig struct {
 	// Counter configures counter-based quota for partitionable devices.
 	// Maps a DRA driver counter to the parent DeviceClassMapping's Kueue quota resource.
 	// +optional
 	Counter *DeviceClassCounterSource `json:"counter,omitempty"`
+
+	// Capacity configures capacity-based quota for devices that allow
+	// multiple allocations (consumable capacity, KEP-5075).
+	// Maps a device capacity dimension to the parent DeviceClassMapping's Kueue quota resource.
+	// Requires the KueueDRAIntegrationConsumableCapacity feature gate.
+	// +optional
+	Capacity *DeviceClassCapacitySource `json:"capacity,omitempty"`
 }
 
 // DeviceClassCounterSource identifies where to read counter data from and which counter to track.
 type DeviceClassCounterSource struct {
 	// Name is the counter name within the device's consumesCounters
-	// entries to track for quota. Must match a counter name published by
-	// the driver in ResourceSlice devices' consumesCounters field.
+	// entries to track for quota. Must be a DNS label and match a counter
+	// name published by the driver in ResourceSlice devices' consumesCounters field.
 	// Counter set names are per-device identifiers (e.g., gpu-0-counter-set,
 	// gpu-1-counter-set), so name matches across all counter sets
 	// for a given driver without requiring one mapping per device.
@@ -653,8 +739,8 @@ type DeviceClassCounterSource struct {
 	Name string `json:"name"`
 
 	// Driver is the DRA driver name used to filter relevant ResourceSlices.
-	// Must match the spec.driver field on ResourceSlice objects.
-	// The total length must not exceed 253 characters.
+	// Must be a lowercase DNS subdomain and match the spec.driver field on ResourceSlice objects.
+	// The total length must not exceed 63 characters.
 	// +required
 	Driver string `json:"driver"`
 
@@ -663,6 +749,30 @@ type DeviceClassCounterSource struct {
 	// so all partition profiles on that model share one quota pool.
 	// Per-workload charging is determined by the workload's own
 	// ResourceClaimTemplate selector, which narrows to the requested profile.
+	// The selector is compiled at config load time using the upstream dracel
+	// compiler.
+	// +required
+	DeviceSelector resourcev1.DeviceSelector `json:"deviceSelector"`
+}
+
+// DeviceClassCapacitySource configures capacity-based quota tracking
+// for devices that allow multiple allocations (KEP-5075).
+type DeviceClassCapacitySource struct {
+	// Name identifies the capacity dimension to track for quota
+	// (e.g., "gpu.example.com/memory").
+	// Must be a valid DRA QualifiedName.
+	// +required
+	Name resourcev1.QualifiedName `json:"name"`
+
+	// Driver is the DRA driver name used to filter relevant ResourceSlices.
+	// Must match the spec.driver field on ResourceSlice objects.
+	// Must not exceed 63 characters.
+	// +required
+	Driver string `json:"driver"`
+
+	// DeviceSelector scopes which devices are eligible for quota accounting.
+	// Matches devices whose capacity dimensions should be tracked against
+	// the quota pool.
 	// The selector is compiled at config load time using the upstream dracel
 	// compiler.
 	// +required
@@ -680,18 +790,33 @@ type FairSharing struct {
 	// preemptionStrategies indicates which constraints should a preemption satisfy.
 	// The preemption algorithm will only use the next strategy in the list if the
 	// incoming workload (preemptor) doesn't fit after using the previous strategies.
+	// AlmostLCA(x, y) is the last but one node on the path from x to the
+	// lowest common ancestor of x and y in the cohort hierarchy (see KEP-1714).
+	// The strategies compare the shares of AlmostLCA(preemptor, preemptee) and
+	// AlmostLCA(preemptee, preemptor). These are the shares of ClusterQueues themselves
+	// only when both ClusterQueues share the same parent Cohort.
 	// Possible values are:
-	// - LessThanOrEqualToFinalShare: Only preempt a workload if the share of the preemptor CQ
-	//   with the preemptor workload is less than or equal to the share of the preemptee CQ
+	// - LessThanOrEqualToFinalShare: Only preempt a workload if the share of
+	//   AlmostLCA(preemptor, preemptee) with the preemptor workload admitted is
+	//   less than or equal to the share of AlmostLCA(preemptee, preemptor)
 	//   without the workload to be preempted.
 	//   This strategy might favor preemption of smaller workloads in the preemptee CQ,
-	//   regardless of priority or start time, in an effort to keep the share of the CQ
+	//   regardless of priority or start time, in an effort to keep the share of AlmostLCA(preemptee, preemptor)
 	//   as high as possible.
-	// - LessThanInitialShare: Only preempt a workload if the share of the preemptor CQ
-	//   with the incoming workload is strictly less than the share of the preemptee CQ.
+	// - LessThanInitialShare: Only preempt a workload if the share of
+	//   AlmostLCA(preemptor, preemptee) with the preemptor workload admitted is
+	//   strictly less than the share of AlmostLCA(preemptee, preemptor) with the
+	//   workload to be preempted.
 	//   This strategy doesn't depend on the share usage of the workload being preempted.
 	//   As a result, the strategy chooses to preempt workloads with the lowest priority and
 	//   newest start time first.
+	//
+	// Only the following lists are supported:
+	// - ["LessThanOrEqualToFinalShare"]
+	// - ["LessThanInitialShare"]
+	// - ["LessThanOrEqualToFinalShare", "LessThanInitialShare"]
+	//
+	// Any other combination or ordering fails configuration validation.
 	PreemptionStrategies []PreemptionStrategy `json:"preemptionStrategies"`
 }
 

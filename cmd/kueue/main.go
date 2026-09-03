@@ -48,13 +48,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	configapiv1beta1 "sigs.k8s.io/kueue/apis/config/v1beta1"
 	configapi "sigs.k8s.io/kueue/apis/config/v1beta2"
 	kueuealpha "sigs.k8s.io/kueue/apis/kueue/v1alpha1"
-	kueuev1beta1 "sigs.k8s.io/kueue/apis/kueue/v1beta1"
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	qcache "sigs.k8s.io/kueue/pkg/cache/queue"
 	schdcache "sigs.k8s.io/kueue/pkg/cache/scheduler"
+	"sigs.k8s.io/kueue/pkg/cache/scheduler/was"
 	"sigs.k8s.io/kueue/pkg/config"
 	"sigs.k8s.io/kueue/pkg/constants"
 	"sigs.k8s.io/kueue/pkg/controller/admissionchecks/multikueue"
@@ -66,6 +65,7 @@ import (
 	"sigs.k8s.io/kueue/pkg/controller/elasticjobs"
 	"sigs.k8s.io/kueue/pkg/controller/failurerecovery"
 	"sigs.k8s.io/kueue/pkg/controller/jobframework"
+	"sigs.k8s.io/kueue/pkg/controller/jobs"
 	"sigs.k8s.io/kueue/pkg/controller/tas"
 	tasindexer "sigs.k8s.io/kueue/pkg/controller/tas/indexer"
 	"sigs.k8s.io/kueue/pkg/controller/workloaddispatcher"
@@ -73,10 +73,12 @@ import (
 	"sigs.k8s.io/kueue/pkg/dra"
 	"sigs.k8s.io/kueue/pkg/features"
 	"sigs.k8s.io/kueue/pkg/metrics"
+	"sigs.k8s.io/kueue/pkg/resources"
 	"sigs.k8s.io/kueue/pkg/scheduler"
 	preemptexpectations "sigs.k8s.io/kueue/pkg/scheduler/preemption/expectations"
 	"sigs.k8s.io/kueue/pkg/scheduler/preemption/fairsharing"
 	"sigs.k8s.io/kueue/pkg/util/cert"
+	utildra "sigs.k8s.io/kueue/pkg/util/dra"
 	"sigs.k8s.io/kueue/pkg/util/expectations"
 	"sigs.k8s.io/kueue/pkg/util/kubeversion"
 	utillogging "sigs.k8s.io/kueue/pkg/util/logging"
@@ -91,13 +93,12 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
-	// Ensure linking of the job controllers.
-	_ "sigs.k8s.io/kueue/pkg/controller/jobs"
 )
 
 var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	scheme             = runtime.NewScheme()
+	setupLog           = ctrl.Log.WithName("setup")
+	integrationManager = jobs.NewIntegrationManager()
 )
 
 func init() {
@@ -106,15 +107,13 @@ func init() {
 	utilruntime.Must(resourceapi.AddToScheme(scheme))
 
 	utilruntime.Must(kueue.AddToScheme(scheme))
-	utilruntime.Must(kueuev1beta1.AddToScheme(scheme))
 	utilruntime.Must(kueuealpha.AddToScheme(scheme))
-	utilruntime.Must(configapiv1beta1.AddToScheme(scheme))
 	utilruntime.Must(configapi.AddToScheme(scheme))
 	utilruntime.Must(autoscaling.AddToScheme(scheme))
 	utilruntime.Must(inventoryv1alpha1.AddToScheme(scheme))
 	// Add any additional framework integration types.
 	utilruntime.Must(
-		jobframework.ForEachIntegration(func(_ string, cb jobframework.IntegrationCallbacks) error {
+		integrationManager.ForEachIntegration(func(_ string, cb jobframework.IntegrationCallbacks) error {
 			if cb.AddToScheme != nil {
 				return cb.AddToScheme(scheme)
 			}
@@ -161,7 +160,7 @@ func main() {
 	}
 
 	// Validates the configuration after it has been loaded and feature gates have been set.
-	if err := config.Validate(&cfg, scheme).ToAggregate(); err != nil {
+	if err := config.Validate(&cfg, scheme, integrationManager).ToAggregate(); err != nil {
 		setupLog.Error(err, "Unable to validate the configuration")
 		os.Exit(1)
 	}
@@ -293,12 +292,14 @@ func main() {
 	} else {
 		close(certsReady)
 	}
+	resourceFormatter := resources.NewResourceFormatter()
 	cacheOptions := []schdcache.Option{
 		schdcache.WithPodsReadyTracking(blockForPodsReady(&cfg)),
 		schdcache.WithRoleTracker(roleTracker),
 		schdcache.WithResourceMetrics(cfg.Metrics.EnableClusterQueueResources),
 		schdcache.WithCustomLabels(customLabels),
 		schdcache.WithLocalQueueMetrics(lqMetrics),
+		schdcache.WithResourceFormatter(resourceFormatter),
 	}
 	queueOptions := []qcache.Option{
 		qcache.WithPodsReadyRequeuingTimestamp(podsReadyRequeuingTimestamp(&cfg)),
@@ -306,6 +307,7 @@ func main() {
 		qcache.WithCustomLabels(customLabels),
 		qcache.WithLocalQueueMetrics(lqMetrics),
 		qcache.WithResourceMetrics(cfg.Metrics.EnableClusterQueueResources),
+		qcache.WithResourceFormatter(resourceFormatter),
 	}
 	if cfg.Resources != nil && len(cfg.Resources.ExcludeResourcePrefixes) > 0 {
 		cacheOptions = append(
@@ -329,6 +331,12 @@ func main() {
 				os.Exit(1)
 			}
 			setupLog.Info("DRA mapper initialized from configuration")
+			for _, resourceName := range draMapper.CounterBasedResourceNames() {
+				resourceFormatter.RegisterBinaryFormattedResource(resourceName)
+			}
+			for _, resourceName := range draMapper.CapacityBasedResourceNames() {
+				resourceFormatter.RegisterBinaryFormattedResource(resourceName)
+			}
 		}
 	}
 	if cfg.FairSharing != nil {
@@ -337,6 +345,14 @@ func main() {
 	if cfg.AdmissionFairSharing != nil {
 		queueOptions = append(queueOptions, qcache.WithAdmissionFairSharing(cfg.AdmissionFairSharing))
 		cacheOptions = append(cacheOptions, schdcache.WithAdmissionFairSharing(cfg.AdmissionFairSharing))
+	}
+	if features.Enabled(features.SchedulerLibraryIntegration) {
+		sim, err := was.NewWASSimulator(ctx, mgr.GetConfig())
+		if err != nil {
+			setupLog.Error(err, "Failed to initialize scheduling simulator")
+			os.Exit(1)
+		}
+		cacheOptions = append(cacheOptions, schdcache.WithSchedulingSimulator(sim))
 	}
 	cCache := schdcache.New(mgr.GetClient(), cacheOptions...)
 
@@ -354,7 +370,9 @@ func main() {
 	}
 	queues := qcache.NewManager(mgr.GetClient(), cCache, requeuer, queueOptions...)
 
-	if err := setupIndexes(ctx, mgr, &cfg); err != nil {
+	resourceSliceAPIAvailable := utildra.CheckResourceSliceAPIAvailable(mgr)
+
+	if err := setupIndexes(ctx, mgr, &cfg, integrationManager, resourceSliceAPIAvailable); err != nil {
 		setupLog.Error(err, "Unable to setup indexes")
 		os.Exit(1)
 	}
@@ -387,13 +405,15 @@ func main() {
 	}
 
 	controllerOpts := core.SetupControllersOpts{
-		RoleTracker:            roleTracker,
-		PreemptionExpectations: preemptionExpectations,
-		CustomLabels:           customLabels,
-		DRAMapper:              draMapper,
-		DRABackedResources:     draBackedResources,
+		RoleTracker:               roleTracker,
+		PreemptionExpectations:    preemptionExpectations,
+		CustomLabels:              customLabels,
+		DRAMapper:                 draMapper,
+		DRABackedResources:        draBackedResources,
+		ResourceFormatter:         resourceFormatter,
+		ResourceSliceAPIAvailable: resourceSliceAPIAvailable,
 	}
-	if err := setupControllers(ctx, mgr, cCache, queues, &cfg, serverVersionFetcher, controllerOpts); err != nil {
+	if err := setupControllers(ctx, mgr, cCache, queues, &cfg, serverVersionFetcher, integrationManager, controllerOpts); err != nil {
 		setupLog.Error(err, "Unable to setup controllers")
 		os.Exit(1)
 	}
@@ -415,7 +435,7 @@ func main() {
 		}()
 	}
 
-	if err := setupScheduler(mgr, cCache, queues, &cfg, roleTracker, preemptionExpectations, customLabels); err != nil {
+	if err := setupScheduler(mgr, cCache, queues, &cfg, roleTracker, preemptionExpectations, customLabels, resourceFormatter); err != nil {
 		setupLog.Error(err, "Could not setup scheduler")
 		os.Exit(1)
 	}
@@ -427,7 +447,13 @@ func main() {
 	}
 }
 
-func setupIndexes(ctx context.Context, mgr ctrl.Manager, cfg *configapi.Configuration) error {
+func setupIndexes(
+	ctx context.Context,
+	mgr ctrl.Manager,
+	cfg *configapi.Configuration,
+	integrationManager *jobframework.IntegrationManager,
+	resourceSliceAPIAvailable bool,
+) error {
 	err := indexer.Setup(ctx, mgr.GetFieldIndexer())
 	if err != nil {
 		return err
@@ -455,16 +481,17 @@ func setupIndexes(ctx context.Context, mgr ctrl.Manager, cfg *configapi.Configur
 		}
 	}
 
-	if features.Enabled(features.KueueDRAIntegrationPartitionableDevices) {
+	if resourceSliceAPIAvailable {
 		if err := core.SetupResourceSliceIndexer(ctx, mgr.GetFieldIndexer()); err != nil {
 			return fmt.Errorf("could not setup ResourceSlice indexer: %w", err)
 		}
 	}
 
 	indexOpts := []jobframework.Option{
+		jobframework.WithIntegrationManager(integrationManager),
 		jobframework.WithEnabledFrameworks(cfg.Integrations.Frameworks),
 	}
-	return jobframework.SetupIndexes(ctx, mgr.GetFieldIndexer(), indexOpts...)
+	return integrationManager.SetupIndexes(ctx, mgr.GetFieldIndexer(), indexOpts...)
 }
 
 func setupControllers(
@@ -474,6 +501,7 @@ func setupControllers(
 	queues *qcache.Manager,
 	cfg *configapi.Configuration,
 	serverVersionFetcher *kubeversion.ServerVersionFetcher,
+	integrationManager *jobframework.IntegrationManager,
 	opts core.SetupControllersOpts,
 ) error {
 	if failedCtrl, err := core.SetupControllers(mgr, queues, cCache, cfg, opts); err != nil {
@@ -502,7 +530,7 @@ func setupControllers(
 	}
 
 	if features.Enabled(features.MultiKueue) {
-		adapters, err := jobframework.GetMultiKueueAdapters(sets.New(cfg.Integrations.Frameworks...))
+		adapters, err := integrationManager.GetMultiKueueAdapters(sets.New(cfg.Integrations.Frameworks...))
 		if err != nil {
 			return fmt.Errorf("could not get the enabled multikueue adapters: %w", err)
 		}
@@ -557,27 +585,31 @@ func setupControllers(
 		}
 	}
 
+	labelKeysToCopy, annotationsToCopy := getLabelsAndAnnotationsToCopy(cfg)
 	jfOpts := []jobframework.Option{
+		jobframework.WithIntegrationManager(integrationManager),
 		jobframework.WithManageJobsWithoutQueueName(cfg.ManageJobsWithoutQueueName),
 		jobframework.WithWaitForPodsReady(cfg.WaitForPodsReady),
 		jobframework.WithKubeServerVersion(serverVersionFetcher),
 		jobframework.WithEnabledFrameworks(cfg.Integrations.Frameworks),
 		jobframework.WithEnabledExternalFrameworks(cfg.Integrations.ExternalFrameworks),
 		jobframework.WithManagerName(constants.KueueName),
-		jobframework.WithLabelKeysToCopy(cfg.Integrations.LabelKeysToCopy),
+		jobframework.WithLabelKeysToCopy(labelKeysToCopy),
+		jobframework.WithAnnotationsToCopy(annotationsToCopy),
 		jobframework.WithCache(cCache),
 		jobframework.WithQueues(queues),
 		jobframework.WithObjectRetentionPolicies(cfg.ObjectRetentionPolicies),
 		jobframework.WithRoleTracker(opts.RoleTracker),
 		jobframework.WithCustomLabels(opts.CustomLabels),
 	}
+
 	nsSelector, err := metav1.LabelSelectorAsSelector(cfg.ManagedJobsNamespaceSelector)
 	if err != nil {
 		return fmt.Errorf("failed to parse managedJobsNamespaceSelector: %w", err)
 	}
 	jfOpts = append(jfOpts, jobframework.WithManagedJobsNamespaceSelector(nsSelector))
 
-	if err := jobframework.SetupControllers(ctx, mgr, setupLog, jfOpts...); err != nil {
+	if err := integrationManager.SetupControllers(ctx, mgr, setupLog, jfOpts...); err != nil {
 		return fmt.Errorf(
 			"unable to create controller or webhook for kubernetesVersion %v: %w",
 			serverVersionFetcher.GetServerVersion(),
@@ -586,6 +618,15 @@ func setupControllers(
 	}
 
 	return nil
+}
+
+func getLabelsAndAnnotationsToCopy(cfg *configapi.Configuration) (labelKeysToCopy sets.Set[string], annotationsToCopy sets.Set[string]) {
+	if !features.Enabled(features.CustomMetricLabels) {
+		return sets.New(cfg.Integrations.LabelKeysToCopy...), sets.New[string]()
+	}
+	labelKeysToCopy, annotationsToCopy = metrics.WorkloadCustomLabelSources(cfg.Metrics.CustomLabels)
+	labelKeysToCopy.Insert(cfg.Integrations.LabelKeysToCopy...)
+	return
 }
 
 // setupProbeEndpoints registers the health endpoints
@@ -625,6 +666,7 @@ func setupScheduler(
 	roleTracker *roletracker.RoleTracker,
 	preemptionExpectations *expectations.Store,
 	customLabels *metrics.CustomLabels,
+	resourceFormatter *resources.ResourceFormatter,
 ) error {
 	sched := scheduler.New(
 		queues,
@@ -638,6 +680,7 @@ func setupScheduler(
 		scheduler.WithRoleTracker(roleTracker),
 		scheduler.WithPreemptionExpectations(preemptionExpectations),
 		scheduler.WithCustomLabels(customLabels),
+		scheduler.WithResourceFormatter(resourceFormatter),
 	)
 	if err := mgr.Add(sched); err != nil {
 		return fmt.Errorf("unable to add scheduler to manager: %w", err)

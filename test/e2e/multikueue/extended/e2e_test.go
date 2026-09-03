@@ -39,6 +39,7 @@ import (
 	leaderworkersetv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
+	"sigs.k8s.io/kueue/pkg/controller/jobframework"
 	workloadaw "sigs.k8s.io/kueue/pkg/controller/jobs/appwrapper"
 	workloadjobset "sigs.k8s.io/kueue/pkg/controller/jobs/jobset"
 	workloadpytorchjob "sigs.k8s.io/kueue/pkg/controller/jobs/kubeflow/jobs/pytorchjob"
@@ -63,6 +64,7 @@ import (
 	testingrayservice "sigs.k8s.io/kueue/pkg/util/testingjobs/rayservice"
 	testingtrainjob "sigs.k8s.io/kueue/pkg/util/testingjobs/trainjob"
 	"sigs.k8s.io/kueue/pkg/workload"
+	"sigs.k8s.io/kueue/pkg/workloadslicing"
 	"sigs.k8s.io/kueue/test/util"
 )
 
@@ -799,7 +801,82 @@ var _ = ginkgo.Describe("MultiKueue", func() {
 				})
 			})
 
-			ginkgo.It("Should run a RayService on worker if admitted", ginkgo.Label("requires:fullray"), func() {
+			ginkgo.It("Should scale an elastic RayCluster on worker if admitted", func() {
+				kuberayTestImage := util.GetKuberayTestImage()
+				raycluster := testingraycluster.MakeCluster("raycluster-elastic", managerNs.Name).
+					Suspend(true).
+					SetAnnotation(workloadslicing.EnabledAnnotationKey, workloadslicing.EnabledAnnotationValue).
+					Queue(managerLq.Name).
+					ScaleFirstWorkerGroup(1).
+					RequestAndLimit(rayv1.HeadNode, corev1.ResourceCPU, "200m").
+					RequestAndLimit(rayv1.WorkerNode, corev1.ResourceCPU, "200m").
+					Image(rayv1.HeadNode, kuberayTestImage, []string{}).
+					Image(rayv1.WorkerNode, kuberayTestImage, []string{}).
+					Obj()
+
+				ginkgo.By("Creating the elastic RayCluster", func() {
+					util.MustCreate(ctx, k8sManagerClient, raycluster)
+				})
+
+				// Elastic (workload-slicing) RayCluster workloads are named with the
+				// object's generation, so fetch the created object to derive the name
+				// of its current slice.
+				gomega.Expect(k8sManagerClient.Get(ctx, client.ObjectKeyFromObject(raycluster), raycluster)).To(gomega.Succeed())
+				wlLookupKey := types.NamespacedName{
+					Name:      jobframework.GetWorkloadNameForOwnerWithGVKAndGeneration(raycluster.Name, raycluster.UID, rayv1.GroupVersion.WithKind("RayCluster"), raycluster.GetGeneration()),
+					Namespace: managerNs.Name,
+				}
+				admittedWorker := util.ExpectWorkloadsToBeAdmittedAndGetWorkerName(ctx, k8sManagerClient, wlLookupKey, multiKueueAc.Name)
+				ginkgo.GinkgoLogr.Info(fmt.Sprintf("elastic RayCluster %s/%s is admitted in worker cluster %s", raycluster.Name, raycluster.Namespace, admittedWorker))
+
+				// The assertions below check DesiredWorkerReplicas, which KubeRay derives
+				// directly from the worker cluster's RayCluster spec. This is exactly what
+				// the manager-driven elastic sync propagates, and it does not depend on the
+				// Ray runtime becoming healthy (Ray pod readiness is KubeRay's own concern).
+				ginkgo.By("Checking the RayCluster starts with one worker on the worker cluster", func() {
+					gomega.Eventually(func(g gomega.Gomega) {
+						createdRayCluster := &rayv1.RayCluster{}
+						g.Expect(k8sManagerClient.Get(ctx, client.ObjectKeyFromObject(raycluster), createdRayCluster)).To(gomega.Succeed())
+						g.Expect(createdRayCluster.Status.DesiredWorkerReplicas).To(gomega.Equal(int32(1)))
+					}, util.VeryLongTimeout, util.Interval).Should(gomega.Succeed())
+				})
+
+				ginkgo.By("Scaling the first worker group up to three on the manager", func() {
+					gomega.Eventually(func(g gomega.Gomega) {
+						createdRayCluster := &rayv1.RayCluster{}
+						g.Expect(k8sManagerClient.Get(ctx, client.ObjectKeyFromObject(raycluster), createdRayCluster)).To(gomega.Succeed())
+						createdRayCluster.Spec.WorkerGroupSpecs[0].Replicas = new(int32(3))
+						g.Expect(k8sManagerClient.Update(ctx, createdRayCluster)).To(gomega.Succeed())
+					}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				})
+
+				ginkgo.By("Checking the scaled-up worker replicas propagate to the worker cluster", func() {
+					gomega.Eventually(func(g gomega.Gomega) {
+						createdRayCluster := &rayv1.RayCluster{}
+						g.Expect(k8sManagerClient.Get(ctx, client.ObjectKeyFromObject(raycluster), createdRayCluster)).To(gomega.Succeed())
+						g.Expect(createdRayCluster.Status.DesiredWorkerReplicas).To(gomega.Equal(int32(3)))
+					}, util.VeryLongTimeout, util.Interval).Should(gomega.Succeed())
+				})
+
+				ginkgo.By("Scaling the first worker group back down to one on the manager", func() {
+					gomega.Eventually(func(g gomega.Gomega) {
+						createdRayCluster := &rayv1.RayCluster{}
+						g.Expect(k8sManagerClient.Get(ctx, client.ObjectKeyFromObject(raycluster), createdRayCluster)).To(gomega.Succeed())
+						createdRayCluster.Spec.WorkerGroupSpecs[0].Replicas = new(int32(1))
+						g.Expect(k8sManagerClient.Update(ctx, createdRayCluster)).To(gomega.Succeed())
+					}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				})
+
+				ginkgo.By("Checking the reduced worker replicas propagate to the worker cluster", func() {
+					gomega.Eventually(func(g gomega.Gomega) {
+						createdRayCluster := &rayv1.RayCluster{}
+						g.Expect(k8sManagerClient.Get(ctx, client.ObjectKeyFromObject(raycluster), createdRayCluster)).To(gomega.Succeed())
+						g.Expect(createdRayCluster.Status.DesiredWorkerReplicas).To(gomega.Equal(int32(1)))
+					}, util.VeryLongTimeout, util.Interval).Should(gomega.Succeed())
+				})
+			})
+
+			ginkgo.It("Should run a RayService on worker if admitted", func() {
 				kuberayTestImage := util.GetKuberayTestImage()
 
 				// Create ConfigMap with a simple Ray Serve application
@@ -881,8 +958,8 @@ app = HelloWorld.bind()`,
 					Obj()
 
 				rayService.Spec.RayClusterSpec.WorkerGroupSpecs[0].GroupName = "small-group"
-				rayService.Spec.RayClusterSpec.WorkerGroupSpecs[0].MinReplicas = ptr.To[int32](1)
-				rayService.Spec.RayClusterSpec.WorkerGroupSpecs[0].MaxReplicas = ptr.To[int32](2)
+				rayService.Spec.RayClusterSpec.WorkerGroupSpecs[0].MinReplicas = new(int32(1))
+				rayService.Spec.RayClusterSpec.WorkerGroupSpecs[0].MaxReplicas = new(int32(2))
 
 				ginkgo.By("Creating the ConfigMap on all clusters", func() {
 					worker1ConfigMap := configMap.DeepCopy()
@@ -908,6 +985,51 @@ app = HelloWorld.bind()`,
 						g.Expect(createdRayService.Spec.RayClusterSpec.Suspend).To(gomega.Equal(new(false)))
 						g.Expect(apimeta.IsStatusConditionTrue(createdRayService.Status.Conditions, string(rayv1.RayServiceReady))).To(gomega.BeTrue())
 					}, util.VeryLongTimeout, util.Interval).Should(gomega.Succeed())
+				})
+
+				// An in-place serveConfigV2 edit is quota-neutral, so MultiKueue forwards it
+				// to the worker copy without re-admission. num_replicas 1 -> 2 is a clear,
+				// observable change within serveConfigV2.
+				updatedServeConfigV2 := `applications:
+  - name: hello_app
+    import_path: hello_serve:app
+    route_prefix: /
+    deployments:
+      - name: HelloWorld
+        num_replicas: 2
+        max_replicas_per_node: 1
+        ray_actor_options:
+          num_cpus: 0.2`
+
+				gomega.Expect(updatedServeConfigV2).NotTo(gomega.Equal(serveConfigV2), "the updated serveConfigV2 must differ from the initial config so the forward assertion is meaningful")
+
+				workerClient := kubernetesClients[admittedWorker].client
+				var workerRayServiceUID types.UID
+				ginkgo.By("Recording the existing worker copy and its initial serveConfigV2", func() {
+					gomega.Eventually(func(g gomega.Gomega) {
+						workerRayService := &rayv1.RayService{}
+						g.Expect(workerClient.Get(ctx, client.ObjectKeyFromObject(rayService), workerRayService)).To(gomega.Succeed())
+						g.Expect(workerRayService.Spec.ServeConfigV2).To(gomega.Equal(serveConfigV2))
+						workerRayServiceUID = workerRayService.UID
+					}, util.LongTimeout, util.Interval).Should(gomega.Succeed())
+				})
+
+				ginkgo.By("Updating serveConfigV2 on the manager", func() {
+					gomega.Eventually(func(g gomega.Gomega) {
+						createdRayService := &rayv1.RayService{}
+						g.Expect(k8sManagerClient.Get(ctx, client.ObjectKeyFromObject(rayService), createdRayService)).To(gomega.Succeed())
+						createdRayService.Spec.ServeConfigV2 = updatedServeConfigV2
+						g.Expect(k8sManagerClient.Update(ctx, createdRayService)).To(gomega.Succeed())
+					}, util.Timeout, util.Interval).Should(gomega.Succeed())
+				})
+
+				ginkgo.By("Checking the change is promptly forwarded to the same worker copy (in-place, no re-admission)", func() {
+					gomega.Eventually(func(g gomega.Gomega) {
+						workerRayService := &rayv1.RayService{}
+						g.Expect(workerClient.Get(ctx, client.ObjectKeyFromObject(rayService), workerRayService)).To(gomega.Succeed())
+						g.Expect(workerRayService.Spec.ServeConfigV2).To(gomega.Equal(updatedServeConfigV2))
+						g.Expect(workerRayService.UID).To(gomega.Equal(workerRayServiceUID))
+					}, util.MediumTimeout, util.Interval).Should(gomega.Succeed())
 				})
 			})
 		})

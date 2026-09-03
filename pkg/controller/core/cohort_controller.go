@@ -18,7 +18,6 @@ package core
 
 import (
 	"context"
-	"slices"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -40,6 +39,7 @@ import (
 	schdcache "sigs.k8s.io/kueue/pkg/cache/scheduler"
 	"sigs.k8s.io/kueue/pkg/features"
 	"sigs.k8s.io/kueue/pkg/metrics"
+	"sigs.k8s.io/kueue/pkg/util/resourcegroups"
 	"sigs.k8s.io/kueue/pkg/util/roletracker"
 )
 
@@ -141,16 +141,17 @@ func (r *CohortReconciler) Create(e event.TypedCreateEvent[*kueue.Cohort]) bool 
 func (r *CohortReconciler) Update(e event.TypedUpdateEvent[*kueue.Cohort]) bool {
 	log := r.logger().WithValues("cohort", klog.KObj(e.ObjectNew))
 
-	var customLabelsChanged bool
-	if features.Enabled(features.CustomMetricLabels) {
-		// Store in Reconcile so labelsUpdated remains true for clear-and-resync.
-		customLabelsChanged = !slices.Equal(
-			r.customLabels.CohortGet(kueue.CohortReference(e.ObjectNew.GetName())),
-			r.customLabels.ExtractValues(e.ObjectNew.GetLabels(), e.ObjectNew.GetAnnotations()),
-		)
-	}
+	clUpdateRequired := features.Enabled(features.CustomMetricLabels) && r.customLabels.UpdateRequired(
+		config.SourceKindCohort,
+		e.ObjectNew.GetName(),
+		e.ObjectNew.GetLabels(),
+		e.ObjectNew.GetAnnotations(),
+	)
 
-	if equality.Semantic.DeepEqual(e.ObjectOld.Spec, e.ObjectNew.Spec) && !customLabelsChanged {
+	specOrQuotaUpdated := !equality.Semantic.DeepEqual(e.ObjectOld.Spec, e.ObjectNew.Spec) ||
+		!equality.Semantic.DeepEqual(resourcegroups.EffectiveCohortResourceGroups(e.ObjectOld), resourcegroups.EffectiveCohortResourceGroups(e.ObjectNew))
+
+	if !specOrQuotaUpdated && !clUpdateRequired {
 		log.V(2).Info("Skip Cohort update event as Cohort unchanged")
 		return false
 	}
@@ -199,7 +200,10 @@ func (r *CohortReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		)
 	}
 
-	log.V(2).Info("Cohort is being created or updated", "resources", cohort.Spec.ResourceGroups)
+	log.V(2).Info("Cohort is being created or updated",
+		"resources", resourcegroups.EffectiveCohortResourceGroups(&cohort),
+		"usesEffectiveQuotas", features.Enabled(features.DynamicQuotaOrchestration) && cohort.Status.EffectiveQuotas != nil,
+	)
 	if err := r.cache.AddOrUpdateCohort(&cohort); err != nil {
 		log.V(2).Error(err, "Error adding or updating cohort in the cache")
 		// Fail fast to avoid queue/status updates from a stale cache state.

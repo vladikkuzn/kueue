@@ -17,13 +17,16 @@ limitations under the License.
 package util
 
 import (
+	"context"
 	"strconv"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	gomegatypes "github.com/onsi/gomega/types"
+	prometheusv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/model"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/component-base/metrics/testutil"
 
@@ -97,10 +100,22 @@ func ExpectLQByStatusMetric(lq *kueue.LocalQueue, status metav1.ConditionStatus)
 
 func ExpectPendingWorkloadsMetric(cq *kueue.ClusterQueue, active, inadmissible int, customLabels ...string) {
 	ginkgo.GinkgoHelper()
+	if active > 0 || len(customLabels) == 0 {
+		lvs := append([]string{cq.Name, metrics.PendingStatusActive, roletracker.RoleStandalone}, customLabels...)
+		expectGaugeMetric(metrics.PendingWorkloads, lvs, gomega.Equal(float64(active)), "pending_workloads with status=active")
+	}
+	if inadmissible > 0 || len(customLabels) == 0 {
+		lvs := append([]string{cq.Name, metrics.PendingStatusInadmissible, roletracker.RoleStandalone}, customLabels...)
+		expectGaugeMetric(metrics.PendingWorkloads, lvs, gomega.Equal(float64(inadmissible)), "pending_workloads with status=inadmissible")
+	}
+}
+
+func ExpectPendingSchedulingHashesMetric(cq *kueue.ClusterQueue, active, inadmissible int, customLabels ...string) {
+	ginkgo.GinkgoHelper()
 	vals := []int{active, inadmissible}
 	for i, status := range pendingStatuses {
 		lvs := append([]string{cq.Name, status, roletracker.RoleStandalone}, customLabels...)
-		expectGaugeMetric(metrics.PendingWorkloads, lvs, gomega.Equal(float64(vals[i])), "pending_workloads with status=%s", status)
+		expectGaugeMetric(metrics.PendingSchedulingHashes, lvs, gomega.Equal(float64(vals[i])), "pending_scheduling_hashes with status=%s", status)
 	}
 }
 
@@ -124,6 +139,22 @@ func ExpectAdmittedWorkloadsTotalMetric(cq *kueue.ClusterQueue, priorityClass st
 	ExpectAdmittedWorkloadsTotalMetricWithTimeout(cq, priorityClass, v, Timeout, customLabels...)
 }
 
+// GetMultiKueueWorkloadsAdmittedTotal reads the current value of the
+// multikueue_workloads_admitted_total counter, so tests can assert on the
+// delta and stay independent of metrics accumulated by earlier specs.
+func GetMultiKueueWorkloadsAdmittedTotal(cq *kueue.ClusterQueue, cluster string) int {
+	ginkgo.GinkgoHelper()
+	v, err := testutil.GetCounterMetricValue(metrics.MultiKueueWorkloadsAdmittedTotal.WithLabelValues(cq.Name, cluster, roletracker.RoleStandalone))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return int(v)
+}
+
+func ExpectMultiKueueWorkloadsAdmittedTotalMetric(cq *kueue.ClusterQueue, cluster string, v int) {
+	ginkgo.GinkgoHelper()
+	expectCounterMetric(metrics.MultiKueueWorkloadsAdmittedTotal, v,
+		cq.Name, cluster, roletracker.RoleStandalone)
+}
+
 func ExpectAdmissionWaitTimeMetric(cq *kueue.ClusterQueue, priorityClass string, count int) {
 	ginkgo.GinkgoHelper()
 	expectHistogramMetric(metrics.AdmissionWaitTime, gomega.Equal(count), cq.Name, priorityClass, roletracker.RoleStandalone)
@@ -132,6 +163,16 @@ func ExpectAdmissionWaitTimeMetric(cq *kueue.ClusterQueue, priorityClass string,
 func ExpectAdmissionChecksWaitTimeMetric(cq *kueue.ClusterQueue, priorityClass string, count int) {
 	ginkgo.GinkgoHelper()
 	expectHistogramMetric(metrics.AdmissionChecksWaitTime, gomega.Equal(count), cq.Name, priorityClass, roletracker.RoleStandalone)
+}
+
+func ExpectExecutionTimeMetric(cq *kueue.ClusterQueue, priorityClass string, count int) {
+	ginkgo.GinkgoHelper()
+	expectHistogramMetric(metrics.ExecutionTimeSeconds, gomega.Equal(count), cq.Name, priorityClass, roletracker.RoleStandalone)
+}
+
+func ExpectLQExecutionTimeMetric(lq *kueue.LocalQueue, priorityClass string, count int) {
+	ginkgo.GinkgoHelper()
+	expectHistogramMetric(metrics.LocalQueueExecutionTimeSeconds, gomega.Equal(count), lq.Name, lq.Namespace, priorityClass, roletracker.RoleStandalone)
 }
 
 func ExpectLQAdmissionChecksWaitTimeMetric(lq *kueue.LocalQueue, priorityClass string, count int) {
@@ -251,9 +292,10 @@ func expectCounterMetric(metric *prometheus.CounterVec, count int, lvs ...string
 	expectCounterMetricWithTimeout(metric, count, Timeout, lvs...)
 }
 
-func ExpectLQAdmissionWaitTimeMetric(lq *kueue.LocalQueue, priorityClass string, count int) {
+func ExpectLQAdmissionWaitTimeMetric(lq *kueue.LocalQueue, priorityClass string, count int, customLabels ...string) {
 	ginkgo.GinkgoHelper()
-	expectHistogramMetric(metrics.LocalQueueAdmissionWaitTime, gomega.Equal(count), lq.Name, lq.Namespace, priorityClass, roletracker.RoleStandalone)
+	lvs := append([]string{lq.Name, lq.Namespace, priorityClass, roletracker.RoleStandalone}, customLabels...)
+	expectHistogramMetric(metrics.LocalQueueAdmissionWaitTime, gomega.Equal(count), lvs...)
 }
 
 func ExpectClusterQueueStatusMetric(cq *kueue.ClusterQueue, status metrics.ClusterQueueStatus, customLabelValues ...string) {
@@ -356,10 +398,16 @@ func ExpectCohortSubtreeResourceReservationsGaugeMetricCleaned(cohortName, flavo
 	ExpectCohortSubtreeResourceReservationsGaugeMetric(cohortName, flavor, resource, 0, customLabels...)
 }
 
-func ExpectAdmittedActiveWorkloadsGaugeMetric(clusterQueue kueue.ClusterQueueReference, count float64) {
+func ExpectAdmittedActiveWorkloadsGaugeMetric(clusterQueue kueue.ClusterQueueReference, count float64, customLabels ...string) {
 	ginkgo.GinkgoHelper()
-	lvs := []string{string(clusterQueue), roletracker.RoleStandalone}
+	lvs := append([]string{string(clusterQueue), roletracker.RoleStandalone}, customLabels...)
 	expectGaugeMetric(metrics.AdmittedActiveWorkloads, lvs, gomega.Equal(count))
+}
+
+func ExpectLQAdmittedActiveWorkloadsGaugeMetric(lq *kueue.LocalQueue, count float64, customLabels ...string) {
+	ginkgo.GinkgoHelper()
+	lvs := append([]string{lq.Name, lq.Namespace, roletracker.RoleStandalone}, customLabels...)
+	expectGaugeMetric(metrics.LocalQueueAdmittedActiveWorkloads, lvs, gomega.Equal(count))
 }
 
 func ExpectCohortSubtreeAdmittedActiveWorkloadsGaugeMetric(cohortName kueue.CohortReference, count float64) {
@@ -383,5 +431,24 @@ func ExpectClusterQueueInfoMetric(cqName, parentCohort, rootCohort string, count
 func ExpectPodSchedulingGateRemovalSecondsMetricLessOrEqual(name string, cqName kueue.ClusterQueueReference, isGroup bool, count int) {
 	ginkgo.GinkgoHelper()
 	matcher := gomega.Equal(count)
-	expectHistogramMetric(metrics.PodSchedulingGateRemovalSeconds, matcher, name, string(cqName), strconv.FormatBool(isGroup))
+	expectHistogramMetric(metrics.PodSchedulingGateRemovalSeconds, matcher, name, string(cqName), strconv.FormatBool(isGroup), roletracker.RoleStandalone)
+}
+
+func ExpectPrometheusTargetForKueue(ctx context.Context, prometheusClient prometheusv1.API) {
+	ginkgo.GinkgoHelper()
+	gomega.Eventually(func(g gomega.Gomega) {
+		result, err := prometheusClient.Targets(ctx)
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+
+		hasKueueTarget := false
+		for _, t := range result.Active {
+			if t.Labels["job"] == model.LabelValue(DefaultMetricsServiceName) &&
+				t.Labels["namespace"] == model.LabelValue(GetKueueNamespace()) {
+				hasKueueTarget = true
+				g.Expect(t.Health).To(gomega.Equal(prometheusv1.HealthGood))
+				break
+			}
+		}
+		g.Expect(hasKueueTarget).To(gomega.BeTrue(), "Kueue target not found. Active targets: %v", result.Active)
+	}, VeryLongTimeout, Interval).Should(gomega.Succeed())
 }

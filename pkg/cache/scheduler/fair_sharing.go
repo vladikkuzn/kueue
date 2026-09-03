@@ -19,6 +19,7 @@ package scheduler
 import (
 	"cmp"
 	"math"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -96,17 +97,25 @@ func (d DRS) PreciseWeightedShare() float64 {
 	return d.unweightedRatio / d.fairWeight
 }
 
+// PreciseWeightedShareSerialized returns the DRS value
+// as a string, marshallable into JSON. Specifically, it handles
+// DRS being +Infinity, which is not a valid numeric value in JSON.
+func (d DRS) PreciseWeightedShareSerialized() string {
+	drs := d.PreciseWeightedShare()
+	return strconv.FormatFloat(drs, 'f', -1, 64)
+}
+
 // CompareDRS compares two DRS values. A lower value
 // indicates that the ClusterQueue/Cohort with this
 // value should be preferred for scheduling, while
 // a higher value preferred for preemption.
 func CompareDRS(a, b DRS) int {
 	switch {
-	case a.zeroWeightBorrows() && b.zeroWeightBorrows():
+	case a.ZeroWeightBorrows() && b.ZeroWeightBorrows():
 		return cmp.Compare(a.unweightedRatio, b.unweightedRatio)
-	case a.zeroWeightBorrows():
+	case a.ZeroWeightBorrows():
 		return 1
-	case b.zeroWeightBorrows():
+	case b.ZeroWeightBorrows():
 		return -1
 	default:
 		return cmp.Compare(a.PreciseWeightedShare(), b.PreciseWeightedShare())
@@ -123,7 +132,7 @@ func CompareDRS(a, b DRS) int {
 // or Cohort is borrowing, we return math.MaxInt.
 func (d DRS) roundedWeightedShare() (int64, corev1.ResourceName) {
 	var weightedShare int64
-	if d.zeroWeightBorrows() {
+	if d.ZeroWeightBorrows() {
 		weightedShare = math.MaxInt64
 	} else {
 		weightedShare = int64(math.Ceil(d.PreciseWeightedShare()))
@@ -131,9 +140,10 @@ func (d DRS) roundedWeightedShare() (int64, corev1.ResourceName) {
 	return weightedShare, d.dominantResource
 }
 
-// zeroWeightBorrows returns whether this DRS represents a
+// ZeroWeightBorrows returns whether this DRS represents a
 // borrowing state for a ClusterQueue/Cohort with a zero weight.
-func (d DRS) zeroWeightBorrows() bool {
+// This is equivalent to PreciseWeightedShare returning +Inf.
+func (d DRS) ZeroWeightBorrows() bool {
 	return d.isWeightZero() && !d.IsZero()
 }
 

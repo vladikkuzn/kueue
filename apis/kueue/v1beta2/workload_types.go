@@ -208,6 +208,7 @@ type PodSetTopologyRequest struct {
 
 	// subGroupCount indicates the count of replicated Jobs (groups) within a PodSet.
 	// For example, in the context of JobSet this value is read from jobset.sigs.k8s.io/replicatedjob-replicas.
+	// +kubebuilder:validation:Minimum=0
 	// +optional
 	SubGroupCount *int32 `json:"subGroupCount,omitempty"`
 
@@ -231,6 +232,7 @@ type PodSetTopologyRequest struct {
 	// in `kueue.x-k8s.io/podset-slice-required-topology` annotation.
 	//
 	// +optional
+	// +kubebuilder:validation:Minimum=1
 	PodSetSliceSize *int32 `json:"podSetSliceSize,omitempty"`
 
 	// podsetSliceRequiredTopologyConstraints defines all layers of slice
@@ -552,7 +554,7 @@ type TopologyAssignmentSlicePodCounts struct {
 	Individual []int32 `json:"individual,omitempty"`
 }
 
-// +kubebuilder:validation:XValidation:rule="has(self.minCount) ? self.minCount <= self.count : true", message="minCount should be positive and less or equal to count"
+// +kubebuilder:validation:XValidation:rule="has(self.minCount) ? self.minCount <= self.count : true", message="minCount should be less or equal to count"
 type PodSet struct {
 	// name is the PodSet name.
 	// +kubebuilder:default=main
@@ -592,7 +594,7 @@ type PodSet struct {
 	// This is an alpha field and requires enabling PartialAdmission feature gate.
 	//
 	// +optional
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=0
 	MinCount *int32 `json:"minCount,omitempty"`
 
 	// topologyRequest defines the topology request for the PodSet.
@@ -984,6 +986,7 @@ const (
 
 	// WorkloadAdmittedReasonPendingDelayedTopologyRequests indicates that there are pending delayed topology requests.
 	WorkloadAdmittedReasonPendingDelayedTopologyRequests = "PendingDelayedTopologyRequests"
+
 	// WorkloadFinished means that the workload associated to the
 	// ResourceClaim finished running (failed or succeeded).
 	WorkloadFinished = "Finished"
