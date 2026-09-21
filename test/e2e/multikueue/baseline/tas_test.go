@@ -65,7 +65,7 @@ func waitForDelayedTopologyRequestReady(wlLookupKey types.NamespacedName) {
 		g.Expect(k8sManagerClient.Get(ctx, wlLookupKey, managerWl)).To(gomega.Succeed())
 		g.Expect(managerWl.Status.Admission).NotTo(gomega.BeNil())
 		g.Expect(managerWl.Status.Admission.PodSetAssignments).To(gomega.HaveLen(1))
-		g.Expect(managerWl.Status.Admission.PodSetAssignments[0].DelayedTopologyRequest).To(gomega.Equal(ptr.To(kueue.DelayedTopologyRequestStateReady)))
+		g.Expect(managerWl.Status.Admission.PodSetAssignments[0].DelayedTopologyRequest).To(gomega.Equal(new(kueue.DelayedTopologyRequestStateReady)))
 	}, util.MediumTimeout, util.Interval).Should(gomega.Succeed())
 }
 
@@ -260,7 +260,7 @@ var _ = ginkgo.Describe("MultiKueue with TopologyAwareScheduling", func() {
 					ctx, k8sManagerClient, wlLookupKey,
 					multiKueueAc.Name,
 					kueue.CheckStateReady,
-					fmt.Sprintf(`The workload got reservation on "%s"`, assignedClusterName),
+					fmt.Sprintf(`The workload was admitted on "%s"`, assignedClusterName),
 				)
 			})
 

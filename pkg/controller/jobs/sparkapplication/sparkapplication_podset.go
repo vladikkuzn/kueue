@@ -229,10 +229,14 @@ func addVolumes(pod *corev1.Pod, app *sparkv1beta2.SparkApplication) error {
 
 		if v, ok := volumeMap[m.Name]; ok {
 			if _, ok := addedVolumeMap[m.Name]; !ok {
-				_ = addVolume(pod, v)
+				if err := addVolume(pod, v); err != nil {
+					return err
+				}
 				addedVolumeMap[m.Name] = v
 			}
-			_ = addVolumeMount(pod, m)
+			if err := addVolumeMount(pod, m); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -305,6 +309,12 @@ func addNodeSelectors(pod *corev1.Pod, app *sparkv1beta2.SparkApplication) error
 		pod.Spec.NodeSelector = make(map[string]string)
 	}
 
+	// The SparkApplication-level node selector applies to both the driver and the
+	// executor pods, and is mutually exclusive with the podSpec-level one. It has to
+	// be recorded in the PodSet template because RunWithPodSetsInfo flattens it into
+	// the podSpec-level selectors and clears spec.nodeSelector, leaving the Workload
+	// as the only place RestorePodSetsInfo can read the original selector back from.
+	maps.Copy(pod.Spec.NodeSelector, app.Spec.NodeSelector)
 	maps.Copy(pod.Spec.NodeSelector, nodeSelector)
 
 	return nil

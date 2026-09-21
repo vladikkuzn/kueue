@@ -24,7 +24,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	componentconfigv1alpha1 "k8s.io/component-base/config/v1alpha1"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -34,8 +33,8 @@ const (
 	overwriteMetricBindAddress                   = ":38081"
 	overwriteHealthProbeBindAddress              = ":38080"
 	overwriteLeaderElectionID                    = "foo.kueue.x-k8s.io"
-	expectedDefaultClientConnectionQPS   float32 = 300.0
-	expectedDefaultClientConnectionBurst int32   = 500
+	expectedDefaultClientConnectionQPS   float32 = 1000.0
+	expectedDefaultClientConnectionBurst int32   = 1000
 )
 
 func TestSetDefaults_Configuration(t *testing.T) {
@@ -101,7 +100,21 @@ func TestSetDefaults_Configuration(t *testing.T) {
 	}
 
 	defaultVisibilityServer := &VisibilityServerConfiguration{
-		BindPort: ptr.To[int32](8082),
+		BindPort: new(int32(8082)),
+	}
+	defaultWaitForPodsReady := &WaitForPodsReady{
+		Timeout: metav1.Duration{
+			Duration: 30 * time.Minute,
+		},
+		BlockAdmission: new(false),
+		RecoveryTimeout: &metav1.Duration{
+			Duration: 30 * time.Minute,
+		},
+		RequeuingStrategy: &RequeuingStrategy{
+			Timestamp:          new(EvictionTimestamp),
+			BackoffBaseSeconds: new(int32(DefaultRequeuingBackoffBaseSeconds)),
+			BackoffMaxSeconds:  new(int32(DefaultRequeuingBackoffMaxSeconds)),
+		},
 	}
 
 	podsReadyTimeoutOverwrite := metav1.Duration{Duration: time.Minute}
@@ -128,6 +141,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: defaultManagedJobsNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"defaulting ControllerManager": {
@@ -174,6 +188,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: defaultManagedJobsNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"should not default ControllerManager": {
@@ -240,6 +255,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: defaultManagedJobsNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"should not set LeaderElectionID": {
@@ -286,6 +302,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: defaultManagedJobsNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"defaulting InternalCertManagement": {
@@ -305,6 +322,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: overwriteNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"should not default InternalCertManagement": {
@@ -325,6 +343,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: overwriteNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"should not default values in custom ClientConnection": {
@@ -334,8 +353,8 @@ func TestSetDefaults_Configuration(t *testing.T) {
 					Enable: new(false),
 				},
 				ClientConnection: &ClientConnection{
-					QPS:   ptr.To[float32](123.0),
-					Burst: ptr.To[int32](456),
+					QPS:   new(float32(123.0)),
+					Burst: new(int32(456)),
 				},
 			},
 			want: &Configuration{
@@ -345,13 +364,14 @@ func TestSetDefaults_Configuration(t *testing.T) {
 					Enable: new(false),
 				},
 				ClientConnection: &ClientConnection{
-					QPS:   ptr.To[float32](123.0),
-					Burst: ptr.To[int32](456),
+					QPS:   new(float32(123.0)),
+					Burst: new(int32(456)),
 				},
 				Integrations:                 overwriteNamespaceIntegrations,
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: overwriteNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"should default empty custom ClientConnection": {
@@ -373,6 +393,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: overwriteNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"defaulting waitForPodsReady values": {
@@ -384,12 +405,17 @@ func TestSetDefaults_Configuration(t *testing.T) {
 			},
 			want: &Configuration{
 				WaitForPodsReady: &WaitForPodsReady{
-					BlockAdmission:  new(false),
-					RecoveryTimeout: &metav1.Duration{},
+					Timeout: metav1.Duration{
+						Duration: 30 * time.Minute,
+					},
+					BlockAdmission: new(false),
+					RecoveryTimeout: &metav1.Duration{
+						Duration: 30 * time.Minute,
+					},
 					RequeuingStrategy: &RequeuingStrategy{
 						Timestamp:          new(EvictionTimestamp),
-						BackoffBaseSeconds: ptr.To[int32](DefaultRequeuingBackoffBaseSeconds),
-						BackoffMaxSeconds:  ptr.To[int32](DefaultRequeuingBackoffMaxSeconds),
+						BackoffBaseSeconds: new(int32(DefaultRequeuingBackoffBaseSeconds)),
+						BackoffMaxSeconds:  new(int32(DefaultRequeuingBackoffMaxSeconds)),
 					},
 				},
 				Namespace:         new(DefaultNamespace),
@@ -420,8 +446,8 @@ func TestSetDefaults_Configuration(t *testing.T) {
 					RecoveryTimeout: &customTimeout,
 					RequeuingStrategy: &RequeuingStrategy{
 						Timestamp:          new(EvictionTimestamp),
-						BackoffBaseSeconds: ptr.To[int32](DefaultRequeuingBackoffBaseSeconds),
-						BackoffMaxSeconds:  ptr.To[int32](DefaultRequeuingBackoffMaxSeconds),
+						BackoffBaseSeconds: new(int32(DefaultRequeuingBackoffBaseSeconds)),
+						BackoffMaxSeconds:  new(int32(DefaultRequeuingBackoffMaxSeconds)),
 					},
 				},
 				Namespace:         new(DefaultNamespace),
@@ -442,10 +468,11 @@ func TestSetDefaults_Configuration(t *testing.T) {
 					Timeout: podsReadyTimeoutOverwrite,
 					RequeuingStrategy: &RequeuingStrategy{
 						Timestamp:          new(CreationTimestamp),
-						BackoffBaseSeconds: ptr.To[int32](63),
-						BackoffMaxSeconds:  ptr.To[int32](1800),
+						BackoffBaseSeconds: new(int32(63)),
+						BackoffMaxSeconds:  new(int32(1800)),
 					},
-					RecoveryTimeout: &metav1.Duration{Duration: time.Minute},
+					RecoveryTimeout:    &metav1.Duration{Duration: time.Minute},
+					UnscheduledTimeout: &metav1.Duration{Duration: 30 * time.Second},
 				},
 				InternalCertManagement: &InternalCertManagement{
 					Enable: new(false),
@@ -453,13 +480,14 @@ func TestSetDefaults_Configuration(t *testing.T) {
 			},
 			want: &Configuration{
 				WaitForPodsReady: &WaitForPodsReady{
-					BlockAdmission:  new(false),
-					Timeout:         podsReadyTimeoutOverwrite,
-					RecoveryTimeout: &metav1.Duration{Duration: time.Minute},
+					BlockAdmission:     new(false),
+					Timeout:            podsReadyTimeoutOverwrite,
+					RecoveryTimeout:    &metav1.Duration{Duration: time.Minute},
+					UnscheduledTimeout: &metav1.Duration{Duration: 30 * time.Second},
 					RequeuingStrategy: &RequeuingStrategy{
 						Timestamp:          new(CreationTimestamp),
-						BackoffBaseSeconds: ptr.To[int32](63),
-						BackoffMaxSeconds:  ptr.To[int32](1800),
+						BackoffBaseSeconds: new(int32(63)),
+						BackoffMaxSeconds:  new(int32(1800)),
 					},
 				},
 				Namespace:         new(DefaultNamespace),
@@ -491,8 +519,8 @@ func TestSetDefaults_Configuration(t *testing.T) {
 					RecoveryTimeout: &metav1.Duration{Duration: 0},
 					RequeuingStrategy: &RequeuingStrategy{
 						Timestamp:          new(EvictionTimestamp),
-						BackoffBaseSeconds: ptr.To[int32](DefaultRequeuingBackoffBaseSeconds),
-						BackoffMaxSeconds:  ptr.To[int32](DefaultRequeuingBackoffMaxSeconds),
+						BackoffBaseSeconds: new(int32(DefaultRequeuingBackoffBaseSeconds)),
+						BackoffMaxSeconds:  new(int32(DefaultRequeuingBackoffMaxSeconds)),
 					},
 				},
 				Namespace:         new(DefaultNamespace),
@@ -529,6 +557,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				MultiKueue:                   defaultMultiKueue,
 				ManagedJobsNamespaceSelector: defaultManagedJobsNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"multiKueue": {
@@ -562,6 +591,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				},
 				ManagedJobsNamespaceSelector: defaultManagedJobsNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"multiKueue origin is an empty value": {
@@ -592,6 +622,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				},
 				ManagedJobsNamespaceSelector: defaultManagedJobsNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"multiKueue GCInterval 0": {
@@ -620,6 +651,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 				},
 				ManagedJobsNamespaceSelector: defaultManagedJobsNamespaceSelector,
 				VisibilityServer:             defaultVisibilityServer,
+				WaitForPodsReady:             defaultWaitForPodsReady,
 			},
 		},
 		"set object retention policy for workloads": {
@@ -651,6 +683,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 					},
 				},
 				VisibilityServer: defaultVisibilityServer,
+				WaitForPodsReady: defaultWaitForPodsReady,
 			},
 		},
 		"resources.transformations strategy": {
@@ -662,7 +695,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 					Transformations: []ResourceTransformation{
 						{Input: corev1.ResourceCPU},
 						{Input: corev1.ResourceMemory, Strategy: new(Replace)},
-						{Input: corev1.ResourceEphemeralStorage, Strategy: ptr.To[ResourceTransformationStrategy]("")},
+						{Input: corev1.ResourceEphemeralStorage, Strategy: new(ResourceTransformationStrategy(""))},
 					},
 				},
 			},
@@ -684,6 +717,7 @@ func TestSetDefaults_Configuration(t *testing.T) {
 					},
 				},
 				VisibilityServer: defaultVisibilityServer,
+				WaitForPodsReady: defaultWaitForPodsReady,
 			},
 		},
 	}

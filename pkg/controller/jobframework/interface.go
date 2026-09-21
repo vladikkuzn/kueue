@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,9 +48,10 @@ type GenericJob interface {
 	// from the workload into the job and unsuspends it.
 	RunWithPodSetsInfo(ctx context.Context, c client.Client, podSetsInfo []podset.PodSetInfo) error
 
-	// RestorePodSetsInfo restores the original node affinity and pod set counts
-	// of the job. It returns whether any change was made.
-	RestorePodSetsInfo(podSetsInfo []podset.PodSetInfo) bool
+	// RestorePodSetsInfo restores the original node affinity and pod set counts of the job.
+	// It returns whether any change was made. On a pod set count mismatch it logs
+	// and returns false without applying any change.
+	RestorePodSetsInfo(ctx context.Context, podSetsInfo []podset.PodSetInfo) bool
 
 	// Finished returns whether the job is completed or failed.
 	// The message describes the condition, and success indicates completion status.
@@ -80,6 +82,10 @@ type JobWithPodLabelSelector interface {
 // when reclaimable pod information is needed.
 type JobWithReclaimablePods interface {
 	// ReclaimablePods returns the list of reclaimable pods.
+	//
+	// Note: for Jobs with ordered Pods that support elastic scaling, implementations
+	// must account for which ranks remain after scaling down to prevent quota leaks.
+	// See the batch Job implementation and kueue#12958, kueue#13117.
 	ReclaimablePods(ctx context.Context, c client.Client) ([]kueue.ReclaimablePod, error)
 }
 
@@ -104,6 +110,13 @@ type JobWithSkip interface {
 	Skip(ctx context.Context) bool
 }
 
+// JobWithOnHold is an optional interface that should be implemented by generic jobs
+// when the job can request its Workload to be put on hold.
+type JobWithOnHold interface {
+	// IsOnHold returns whether the job should be put on hold.
+	IsOnHold() bool
+}
+
 // JobWithPriorityClass is an optional interface that should be implemented by generic jobs
 // when a custom priority class is needed.
 type JobWithPriorityClass interface {
@@ -121,19 +134,31 @@ type JobWithCustomValidation interface {
 	ValidateOnUpdate(ctx context.Context, oldJob GenericJob) (field.ErrorList, error)
 }
 
+// LoadResult contains the result of loading a job.
+type LoadResult struct {
+	// ShouldFinalize indicates whether the Workload corresponding to the Job should be finalized,
+	// i.e. have "resource-in-use" removed.
+	ShouldFinalize bool
+	// Found indicates whether the Job exists, or at least one member of the composable job exists.
+	Found bool
+}
+
+func NewLoadResult(shouldFinalize bool, found bool) *LoadResult {
+	return &LoadResult{ShouldFinalize: shouldFinalize, Found: found}
+}
+
 // ComposableJob is an optional interface that should be implemented by generic jobs
 // composed of multiple API objects.
 type ComposableJob interface {
-	// Load loads all members of the composable job. If removeFinalizers is true,
-	// workload and job finalizers should be removed.
-	Load(ctx context.Context, c client.Client, key *types.NamespacedName) (removeFinalizers bool, err error)
+	// Load loads all members of the composable job.
+	Load(ctx context.Context, c client.Client, key *types.NamespacedName) (*LoadResult, error)
 
 	// Run unsuspends all members of the ComposableJob and injects node affinity
 	// with pod set counts extracted from the workload into all members of the job.
 	Run(ctx context.Context, c client.Client, wl *kueue.Workload, podSetsInfo []podset.PodSetInfo, r events.EventRecorder, msg string) error
 
 	// ConstructComposableWorkload builds a new Workload from all members of the ComposableJob.
-	ConstructComposableWorkload(ctx context.Context, c client.Client, r events.EventRecorder, labelKeysToCopy []string) (*kueue.Workload, error)
+	ConstructComposableWorkload(ctx context.Context, c client.Client, r events.EventRecorder, labelKeysToCopy, annotationsToCopy sets.Set[string]) (*kueue.Workload, error)
 
 	// ListChildWorkloads returns all workloads related to the composable job.
 	ListChildWorkloads(ctx context.Context, c client.Client, parent types.NamespacedName) (*kueue.WorkloadList, error)
@@ -191,14 +216,14 @@ type JobWithManagedBy interface {
 // by generic jobs when custom annotations need to be updated in the API server
 // after changes occur.
 //
-// For example, RayJob may have the "kueue.x-k8s.io/podset-replica-sizes"
-// annotation, which reflects the current replica sizes of the underlying
-// RayCluster. The job reconciler calls GetCustomAnnotations to update
-// such annotations in the API server.
+// For example, RayJob may have the "kueue.x-k8s.io/raycluster-generation"
+// annotation, which reflects the generation of the underlying RayCluster.
+// The job reconciler calls GetCustomAnnotations to update such annotations
+// in the API server.
 type JobWithCustomAnnotations interface {
 	// GetCustomAnnotations returns additional annotations
 	// that should be added to the job.
-	GetCustomAnnotations(ctx context.Context, c client.Client, podSets []kueue.PodSet) (map[string]string, error)
+	GetCustomAnnotations(ctx context.Context, c client.Client) (map[string]string, error)
 }
 
 // ElasticWorkloadNameProvider is an optional interface that provides additional

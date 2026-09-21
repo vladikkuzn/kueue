@@ -25,10 +25,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/component-base/featuregate"
 	testingclock "k8s.io/utils/clock/testing"
-	"k8s.io/utils/ptr"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
+	"sigs.k8s.io/kueue/pkg/features"
 	utiltesting "sigs.k8s.io/kueue/pkg/util/testing"
 	utiltestingapi "sigs.k8s.io/kueue/pkg/util/testing/v1beta2"
 	"sigs.k8s.io/kueue/pkg/workload"
@@ -2729,6 +2730,9 @@ func TestScheduleForFairSharing(t *testing.T) {
 			// as we disallow overlapping preemption targets
 			// in the same cycle
 			enableFairSharing: true,
+			featureGates: map[featuregate.Feature]bool{
+				features.RecomputeAssignmentUponPreemptionTargetsOverlap: false,
+			},
 			additionalClusterQueues: []kueue.ClusterQueue{
 				*utiltestingapi.MakeClusterQueue("other-alpha").
 					Cohort("other").
@@ -3454,7 +3458,7 @@ func TestScheduleForFairSharing(t *testing.T) {
 				utiltesting.MakeEventRecord("default", "nc-low", "EvictedDueToPreempted", corev1.EventTypeNormal).Obj(),
 				utiltesting.MakeEventRecord("default", "nc-low", "Preempted", corev1.EventTypeNormal).Obj(),
 				utiltesting.MakeEventRecord("default", "nc-high", "PreemptedWorkload", corev1.EventTypeNormal).Obj(),
-				utiltesting.MakeEventRecord("default", "nc-high", "Pending", corev1.EventTypeWarning).Obj(),
+				utiltesting.MakeEventRecord("default", "nc-high", kueue.WorkloadQuotaReservedReasonWaitingForPreemptedWorkloads, corev1.EventTypeWarning).Obj(),
 			},
 		},
 		"PreemptionOverBorrowing with fair sharing: preempt in first flavor instead of borrowing in second": {
@@ -3469,7 +3473,7 @@ func TestScheduleForFairSharing(t *testing.T) {
 					FlavorFungibility(kueue.FlavorFungibility{
 						WhenCanBorrow:  kueue.TryNextFlavor,
 						WhenCanPreempt: kueue.TryNextFlavor,
-						Preference:     ptr.To(kueue.PreemptionOverBorrowing),
+						Preference:     new(kueue.PreemptionOverBorrowing),
 					}).
 					ResourceGroup(
 						*utiltestingapi.MakeFlavorQuotas("on-demand").
@@ -3580,7 +3584,7 @@ func TestScheduleForFairSharing(t *testing.T) {
 				utiltesting.MakeEventRecord("default", "fs-low-pob", "EvictedDueToPreempted", corev1.EventTypeNormal).Obj(),
 				utiltesting.MakeEventRecord("default", "fs-low-pob", "Preempted", corev1.EventTypeNormal).Obj(),
 				utiltesting.MakeEventRecord("default", "fs-high-pob", "PreemptedWorkload", corev1.EventTypeNormal).Obj(),
-				utiltesting.MakeEventRecord("default", "fs-high-pob", "Pending", corev1.EventTypeWarning).Obj(),
+				utiltesting.MakeEventRecord("default", "fs-high-pob", kueue.WorkloadQuotaReservedReasonWaitingForPreemptedWorkloads, corev1.EventTypeWarning).Obj(),
 			},
 		},
 	}

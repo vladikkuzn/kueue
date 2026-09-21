@@ -16,8 +16,19 @@ limitations under the License.
 
 package waitforpodsready
 
-import configapi "sigs.k8s.io/kueue/apis/config/v1beta2"
+import (
+	configapi "sigs.k8s.io/kueue/apis/config/v1beta2"
+	"sigs.k8s.io/kueue/pkg/features"
+)
 
 func Enabled(cfg *configapi.WaitForPodsReady) bool {
+	if features.Enabled(features.DisableWaitForPodsReady) {
+		return false
+	}
 	return cfg != nil
+}
+
+func PodsScheduledTrackingEnabled(cfg *configapi.WaitForPodsReady) bool {
+	return cfg != nil && features.Enabled(features.WaitForPodsReadyUnscheduledTimeout) &&
+		cfg.UnscheduledTimeout != nil && cfg.UnscheduledTimeout.Duration > 0
 }

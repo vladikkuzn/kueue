@@ -25,8 +25,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
@@ -41,8 +41,8 @@ var (
 	FrameworkName = "kubeflow.org/mpijob"
 )
 
-func init() {
-	utilruntime.Must(jobframework.RegisterIntegration(FrameworkName, jobframework.IntegrationCallbacks{
+func RegisterIntegration(m *jobframework.IntegrationManager) error {
+	return m.RegisterIntegration(FrameworkName, jobframework.IntegrationCallbacks{
 		SetupIndexes:      SetupIndexes,
 		NewJob:            NewJob,
 		NewReconciler:     NewReconciler,
@@ -50,7 +50,7 @@ func init() {
 		JobType:           &kfmpi.MPIJob{},
 		AddToScheme:       kfmpi.AddToScheme,
 		MultiKueueAdapter: &multiKueueAdapter{},
-	}))
+	})
 }
 
 // +kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=list;get;watch
@@ -121,7 +121,7 @@ func (j *MPIJob) PodSets(ctx context.Context, _ client.Client) ([]kueue.PodSet, 
 		if features.Enabled(features.TopologyAwareScheduling) {
 			topologyRequest, err := jobframework.NewPodSetTopologyRequest(
 				&j.Spec.MPIReplicaSpecs[mpiReplicaType].Template.ObjectMeta).PodIndexLabel(
-				ptr.To(kfmpi.ReplicaIndexLabel)).Build()
+				new(kfmpi.ReplicaIndexLabel)).Build()
 			if err != nil {
 				return nil, err
 			}
@@ -141,19 +141,28 @@ func (j *MPIJob) RunWithPodSetsInfo(ctx context.Context, _ client.Client, podSet
 
 	// The node selectors are provided in the same order as the generated list of
 	// podSets, use the same ordering logic to restore them.
+	log := ctrl.LoggerFrom(ctx)
 	for index := range podSetsInfo {
 		replicaType := orderedReplicaTypes[index]
 		info := podSetsInfo[index]
 		replica := &j.Spec.MPIReplicaSpecs[replicaType].Template
-		if err := podset.Merge(&replica.ObjectMeta, &replica.Spec, info); err != nil {
+		if err := podset.Merge(log, &replica.ObjectMeta, &replica.Spec, info); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (j *MPIJob) RestorePodSetsInfo(podSetsInfo []podset.PodSetInfo) bool {
+func (j *MPIJob) RestorePodSetsInfo(ctx context.Context, podSetsInfo []podset.PodSetInfo) bool {
 	orderedReplicaTypes := orderedReplicaTypes(&j.Spec)
+	if len(podSetsInfo) != len(orderedReplicaTypes) {
+		ctrl.LoggerFrom(ctx).V(2).Info(
+			"Skipping pod set info restore because the pod set count does not match the admitted workload",
+			"expectedCount", len(orderedReplicaTypes),
+			"gotCount", len(podSetsInfo),
+		)
+		return false
+	}
 	changed := false
 	for index, info := range podSetsInfo {
 		replicaType := orderedReplicaTypes[index]
@@ -220,10 +229,10 @@ func SetupIndexes(ctx context.Context, indexer client.FieldIndexer) error {
 
 func orderedReplicaTypes(jobSpec *kfmpi.MPIJobSpec) []kfmpi.MPIReplicaType {
 	var result []kfmpi.MPIReplicaType
-	if _, ok := jobSpec.MPIReplicaSpecs[kfmpi.MPIReplicaTypeLauncher]; ok {
+	if spec, ok := jobSpec.MPIReplicaSpecs[kfmpi.MPIReplicaTypeLauncher]; ok && spec != nil {
 		result = append(result, kfmpi.MPIReplicaTypeLauncher)
 	}
-	if _, ok := jobSpec.MPIReplicaSpecs[kfmpi.MPIReplicaTypeWorker]; ok {
+	if spec, ok := jobSpec.MPIReplicaSpecs[kfmpi.MPIReplicaTypeWorker]; ok && spec != nil {
 		result = append(result, kfmpi.MPIReplicaTypeWorker)
 	}
 	return result

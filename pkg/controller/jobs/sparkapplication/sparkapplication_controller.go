@@ -28,8 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
@@ -48,8 +48,8 @@ const (
 	executorPodSetName = "executor"
 )
 
-func init() {
-	utilruntime.Must(jobframework.RegisterIntegration(FrameworkName, jobframework.IntegrationCallbacks{
+func RegisterIntegration(m *jobframework.IntegrationManager) error {
+	return m.RegisterIntegration(FrameworkName, jobframework.IntegrationCallbacks{
 		SetupIndexes:          SetupIndexes,
 		NewJob:                NewJob,
 		NewReconciler:         NewReconciler,
@@ -57,7 +57,7 @@ func init() {
 		JobType:               &sparkv1beta2.SparkApplication{},
 		AddToScheme:           sparkv1beta2.AddToScheme,
 		CanSupportIntegration: CanSupportIntegration,
-	}))
+	})
 }
 
 // +kubebuilder:rbac:groups=sparkoperator.k8s.io,resources=sparkapplications,verbs=get;list;watch;update;patch;delete
@@ -223,9 +223,14 @@ func (j *SparkApplication) RunWithPodSetsInfo(ctx context.Context, _ client.Clie
 	return nil
 }
 
-func (j *SparkApplication) RestorePodSetsInfo(podSetsInfo []podset.PodSetInfo) bool {
+func (j *SparkApplication) RestorePodSetsInfo(ctx context.Context, podSetsInfo []podset.PodSetInfo) bool {
 	expectedLength := 2 // driver + executor
 	if len(podSetsInfo) != expectedLength {
+		ctrl.LoggerFrom(ctx).V(2).Info(
+			"Skipping pod set info restore because the pod set count does not match the admitted workload",
+			"expectedCount", expectedLength,
+			"gotCount", len(podSetsInfo),
+		)
 		return false
 	}
 
@@ -312,6 +317,13 @@ func (j *SparkApplication) PodsReady(ctx context.Context, _ client.Client) bool 
 	// executors are stuck (e.g. unschedulable), which would let the
 	// waitForPodsReady timeout never fire on heterogeneous resource shortages.
 	expected := int(ptr.Deref(j.Spec.Executor.Instances, 0))
+	// When dynamic allocation is enabled, the actual number of executors can
+	// fluctuate between minExecutors and maxExecutors. Use minExecutors as the
+	// expected count since it's the guaranteed minimum. If neither the CRD
+	// field nor sparkConf is set, use Spec.Executor.Instances as default.
+	if j.Spec.DynamicAllocation != nil && j.Spec.DynamicAllocation.Enabled {
+		expected = int(ptr.Deref(j.Spec.DynamicAllocation.MinExecutors, int32(expected)))
+	}
 	if expected == 0 {
 		return true
 	}

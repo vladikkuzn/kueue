@@ -32,6 +32,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 
+	cfg "sigs.k8s.io/kueue/apis/config/v1beta2"
+	kueuealpha "sigs.k8s.io/kueue/apis/kueue/v1alpha1"
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/cache/hierarchy"
 	"sigs.k8s.io/kueue/pkg/features"
@@ -39,8 +41,9 @@ import (
 	"sigs.k8s.io/kueue/pkg/resources"
 	"sigs.k8s.io/kueue/pkg/util/admissioncheck"
 	"sigs.k8s.io/kueue/pkg/util/api"
-	utilmath "sigs.k8s.io/kueue/pkg/util/math"
+	"sigs.k8s.io/kueue/pkg/util/dqo"
 	"sigs.k8s.io/kueue/pkg/util/queue"
+	"sigs.k8s.io/kueue/pkg/util/resourcegroups"
 	"sigs.k8s.io/kueue/pkg/util/roletracker"
 	stringsutils "sigs.k8s.io/kueue/pkg/util/strings"
 	"sigs.k8s.io/kueue/pkg/workload"
@@ -54,7 +57,7 @@ var (
 // holds admitted workloads.
 type clusterQueue struct {
 	Name              kueue.ClusterQueueReference
-	ResourceGroups    []ResourceGroup
+	ResourceGroups    []resourcegroups.ResourceGroup
 	Workloads         map[workload.Reference]*workload.Info
 	WorkloadsNotReady sets.Set[workload.Reference]
 	NamespaceSelector labels.Selector
@@ -83,6 +86,7 @@ type clusterQueue struct {
 	admittedWorkloadsCount             int
 	isStopped                          bool
 	workloadInfoOptions                []workload.InfoOption
+	resourceFormatter                  *resources.ResourceFormatter
 
 	resourceNode resourceNode
 	hierarchy.ClusterQueue[*cohort]
@@ -99,16 +103,22 @@ type clusterQueue struct {
 
 	ConcurrentAdmissionPolicy *kueue.ConcurrentAdmissionPolicy
 
+	DynamicQuotaOrchestrator kueuealpha.DynamicQuotaOrchestratorReference
+
 	roleTracker *roletracker.RoleTracker
 
-	// values extracted from K8s labels/annotations, used as custom Prometheus metric labels
-	customMetricLabelValues []string
+	// allows access to values extracted from K8s labels/annotations, used as custom Prometheus metric labels
+	customLabels *metrics.CustomLabels
 
 	lqMetrics *metrics.LocalQueueMetricsConfig
 }
 
 func (c *clusterQueue) GetName() kueue.ClusterQueueReference {
 	return c.Name
+}
+
+func (c *clusterQueue) GetCustomLabelValues() []string {
+	return c.customLabels.CQGet(c.Name)
 }
 
 // parentAndRootCohort returns the names of the CQ's parent cohort and root cohort.
@@ -148,27 +158,27 @@ func (c *clusterQueue) updateClusterQueue(
 	admissionChecks map[kueue.AdmissionCheckReference]AdmissionCheck,
 	oldParent *cohort,
 ) error {
-	if c.updateQuotasAndResourceGroups(in.Spec.ResourceGroups) || oldParent != c.Parent() {
-		if oldParent != nil && oldParent != c.Parent() {
-			updateCohortTreeResourcesIfNoCycle(oldParent)
-		}
-		if c.HasParent() {
-			// clusterQueue will be updated as part of tree update.
-			if err := updateCohortTreeResources(c.Parent()); err != nil {
-				return err
-			}
-		} else {
-			// since ClusterQueue has no parent, it won't be updated
-			// as part of tree update.
-			updateClusterQueueResourceNode(c)
-		}
-	}
-
 	nsSelector, err := metav1.LabelSelectorAsSelector(in.Spec.NamespaceSelector)
 	if err != nil {
 		return err
 	}
 	c.NamespaceSelector = nsSelector
+
+	if c.updateQuotasAndResourceGroups(resourcegroups.EffectiveResourceGroups(in)) || oldParent != c.Parent() {
+		if oldParent != nil && oldParent != c.Parent() {
+			updateCohortTreeResourcesIfNoCycle(oldParent)
+		}
+		if c.HasParent() && !hierarchy.HasCycle(c.Parent()) {
+			// clusterQueue will be updated as part of tree update.
+			if err := updateCohortTreeResources(c.Parent()); err != nil {
+				return err
+			}
+		} else {
+			// since ClusterQueue has no parent (or parent cohort hierarchy has a cycle), it won't be updated
+			// as part of tree update.
+			updateClusterQueueResourceNode(c)
+		}
+	}
 
 	c.isStopped = ptr.Deref(in.Spec.StopPolicy, kueue.None) != kueue.None
 
@@ -200,6 +210,7 @@ func (c *clusterQueue) updateClusterQueue(
 	if features.Enabled(features.ConcurrentAdmission) {
 		c.ConcurrentAdmissionPolicy = in.Spec.ConcurrentAdmissionPolicy
 	}
+	c.DynamicQuotaOrchestrator = dqo.EffectiveOrchestrator(in.Status.EffectiveQuotas)
 	return nil
 }
 
@@ -210,10 +221,10 @@ func (c *clusterQueue) ConcurrentAdmissionEnabled() bool {
 	return c.ConcurrentAdmissionPolicy != nil
 }
 
-func createdResourceGroups(kueueRgs []kueue.ResourceGroup) []ResourceGroup {
-	rgs := make([]ResourceGroup, len(kueueRgs))
+func createdResourceGroups(kueueRgs []kueue.ResourceGroup) []resourcegroups.ResourceGroup {
+	rgs := make([]resourcegroups.ResourceGroup, len(kueueRgs))
 	for i, kueueRg := range kueueRgs {
-		rgs[i] = ResourceGroup{
+		rgs[i] = resourcegroups.ResourceGroup{
 			CoveredResources: sets.New(kueueRg.CoveredResources...),
 			Flavors:          make([]kueue.ResourceFlavorReference, 0, len(kueueRg.Flavors)),
 		}
@@ -253,7 +264,8 @@ func (c *clusterQueue) updateQueueStatus(log logr.Logger) {
 		len(c.multiKueueAdmissionChecks) > 1 ||
 		len(c.perFlavorMultiKueueAdmissionChecks) > 0 ||
 		// provisioning requests should not be used on manager cluster with multikueue
-		(len(c.multiKueueAdmissionChecks) > 0 && len(c.provisioningAdmissionChecks) > 0) {
+		(len(c.multiKueueAdmissionChecks) > 0 && len(c.provisioningAdmissionChecks) > 0) ||
+		(c.HasParent() && hierarchy.HasCycle(c.Parent())) {
 		status = pending
 	}
 	if c.Status == terminating {
@@ -262,14 +274,18 @@ func (c *clusterQueue) updateQueueStatus(log logr.Logger) {
 	if status != c.Status {
 		log.V(3).Info("Updating status in cache", "clusterQueue", c.Name, "newStatus", status, "oldStatus", c.Status)
 		c.Status = status
-		metrics.ReportClusterQueueStatus(c.Name, c.Status, c.customMetricLabelValues, c.roleTracker)
+		metrics.ReportClusterQueueStatus(c.Name, c.Status, c.GetCustomLabelValues(), c.roleTracker)
 	}
 }
 
 // ensureTASIsSynced makes sure all TAS workloads are accounted (TAS cache is synced),
 // if TAS cache is initialized.
 func (c *clusterQueue) ensureTASIsSynced(log logr.Logger) {
-	if !features.Enabled(features.TopologyAwareScheduling) || len(c.tasFlavors) == 0 {
+	if !features.Enabled(features.TopologyAwareScheduling) {
+		return
+	}
+	if len(c.tasFlavors) == 0 {
+		c.isTASSynced = false
 		return
 	}
 	if !c.isTASInitialized() {
@@ -281,7 +297,8 @@ func (c *clusterQueue) ensureTASIsSynced(log logr.Logger) {
 	}
 	log.V(2).Info("Syncing TAS usage initilized TAS cache", "workloads", len(c.Workloads))
 	for _, w := range c.Workloads {
-		c.addOrUpdateWorkload(log, w.Obj)
+		wi := workload.NewInfo(log, w.Obj, append(slices.Clone(c.workloadInfoOptions), workload.WithEffectivePodSpecs(w.EffectivePodSpecs))...)
+		c.addOrUpdateWorkload(log, wi)
 	}
 	c.isTASSynced = true
 }
@@ -346,6 +363,11 @@ func (c *clusterQueue) inactiveReason() (string, string) {
 			}
 		}
 
+		if c.HasParent() && hierarchy.HasCycle(c.Parent()) {
+			reasons = append(reasons, kueue.ClusterQueueActiveReasonCohortCycleDetected)
+			messages = append(messages, fmt.Sprintf("Cohort %q has a cycle in hierarchy", c.Parent().GetName()))
+		}
+
 		if len(reasons) == 0 {
 			return kueue.ClusterQueueActiveReasonUnknown, "Can't admit new workloads."
 		}
@@ -372,11 +394,12 @@ func (c *clusterQueue) isTASViolated() bool {
 // UpdateWithFlavors updates a ClusterQueue based on the passed ResourceFlavors set.
 // Exported only for testing.
 func (c *clusterQueue) UpdateWithFlavors(log logr.Logger, flavors map[kueue.ResourceFlavorReference]*kueue.ResourceFlavor) {
-	c.updateFlavorMetadata(flavors)
+	c.updateFlavorMetadata(log, flavors)
 	c.updateQueueStatus(log)
 }
 
-func (c *clusterQueue) updateFlavorMetadata(flavors map[kueue.ResourceFlavorReference]*kueue.ResourceFlavor) {
+func (c *clusterQueue) updateFlavorMetadata(log logr.Logger, flavors map[kueue.ResourceFlavorReference]*kueue.ResourceFlavor) {
+	oldTASFlavors := c.tasFlavors
 	c.missingFlavors = nil
 	c.tasFlavors = nil
 	for i := range c.ResourceGroups {
@@ -384,6 +407,13 @@ func (c *clusterQueue) updateFlavorMetadata(flavors map[kueue.ResourceFlavorRefe
 		for _, fName := range rg.Flavors {
 			if flv, exist := flavors[fName]; exist {
 				if flv.Spec.TopologyName != nil {
+					// A TAS flavor which was not tracked before may come with a freshly created,
+					// empty TAS flavor cache (e.g., the ResourceFlavor was deleted and re-created),
+					// so force a resync to account the usage of admitted workloads again.
+					if _, tracked := oldTASFlavors[fName]; !tracked {
+						log.V(3).Info("TAS flavor was not previously tracked, marking TAS cache as not synced", "flavor", fName)
+						c.isTASSynced = false
+					}
 					if c.tasFlavors == nil {
 						c.tasFlavors = make(map[kueue.ResourceFlavorReference]kueue.TopologyReference, 1)
 					}
@@ -398,8 +428,6 @@ func (c *clusterQueue) updateFlavorMetadata(flavors map[kueue.ResourceFlavorRefe
 
 // updateWithAdmissionChecks updates a ClusterQueue based on the passed AdmissionChecks set.
 func (c *clusterQueue) updateWithAdmissionChecks(log logr.Logger, checks map[kueue.AdmissionCheckReference]AdmissionCheck) {
-	checksPerController := make(map[string][]kueue.AdmissionCheckReference, len(c.AdmissionChecks))
-	singleInstanceControllers := sets.New[string]()
 	multiKueueAdmissionChecks := sets.New[kueue.AdmissionCheckReference]()
 	provisioningAdmissionChecks := sets.New[kueue.AdmissionCheckReference]()
 	var missing []kueue.AdmissionCheckReference
@@ -412,7 +440,6 @@ func (c *clusterQueue) updateWithAdmissionChecks(log logr.Logger, checks map[kue
 			if !ac.Active {
 				inactive = append(inactive, acName)
 			}
-			checksPerController[ac.Controller] = append(checksPerController[ac.Controller], acName)
 			if ac.Controller == kueue.ProvisioningRequestControllerName {
 				provisioningAdmissionChecks.Insert(acName)
 			}
@@ -421,7 +448,7 @@ func (c *clusterQueue) updateWithAdmissionChecks(log logr.Logger, checks map[kue
 				// - cannot use multiple MultiKueue AdmissionChecks on the same ClusterQueue
 				// - cannot use specify MultiKueue AdmissionCheck per flavor
 				multiKueueAdmissionChecks.Insert(acName)
-				if !flavors.Equal(AllFlavors(c.ResourceGroups)) {
+				if !flavors.Equal(resourcegroups.AllFlavors(c.ResourceGroups)) {
 					perFlavorMultiKueueChecks = append(perFlavorMultiKueueChecks, acName)
 				}
 			}
@@ -446,16 +473,6 @@ func (c *clusterQueue) updateWithAdmissionChecks(log logr.Logger, checks map[kue
 		update = true
 	}
 
-	// remove the controllers which don't have more then one AC or are not single instance.
-	maps.DeleteFunc(checksPerController, func(controller string, acs []kueue.AdmissionCheckReference) bool {
-		return len(acs) < 2 || !singleInstanceControllers.Has(controller)
-	})
-
-	// sort the remaining set
-	for c := range checksPerController {
-		slices.Sort(checksPerController[c])
-	}
-
 	if !slices.Equal(c.multiKueueAdmissionChecks, multiKueueChecks) {
 		c.multiKueueAdmissionChecks = multiKueueChecks
 		update = true
@@ -476,14 +493,16 @@ func (c *clusterQueue) updateWithAdmissionChecks(log logr.Logger, checks map[kue
 	}
 }
 
-func (c *clusterQueue) addOrUpdateWorkload(log logr.Logger, w *kueue.Workload) {
+func (c *clusterQueue) addOrUpdateWorkload(log logr.Logger, wi *workload.Info) {
+	w := wi.Obj
 	k := workload.Key(w)
 	if _, exist := c.Workloads[k]; exist {
 		c.deleteWorkload(log, k)
 	}
-	wi := workload.NewInfo(w, c.workloadInfoOptions...)
-	wi.UpdateSchedulingHash(log)
 	c.Workloads[k] = wi
+	if features.Enabled(features.CustomMetricLabels) {
+		c.customLabels.Store(cfg.SourceKindWorkload, string(k), w.Labels, w.Annotations)
+	}
 	c.updateWorkloadUsage(log, wi, add)
 	if c.podsReadyTracking && !apimeta.IsStatusConditionTrue(w.Status.Conditions, kueue.WorkloadPodsReady) {
 		c.WorkloadsNotReady.Insert(k)
@@ -509,15 +528,36 @@ func (c *clusterQueue) deleteWorkload(log logr.Logger, wlKey workload.Reference)
 	c.AllocatableResourceGeneration++
 
 	delete(c.Workloads, wlKey)
+	if features.Enabled(features.CustomMetricLabels) {
+		c.customLabels.Delete(cfg.SourceKindWorkload, string(wlKey))
+	}
 	c.reportActiveWorkloads()
 }
 
 func (c *clusterQueue) reportActiveWorkloads() {
+	clVals := c.GetCustomLabelValues()
 	for ancestor := range c.Parent().PathSelfToRoot() {
-		metrics.ReportCohortSubtreeAdmittedActiveWorkloads(ancestor.Name, ancestor.admittedWorkloadsCount, c.customMetricLabelValues, c.roleTracker)
+		metrics.ReportCohortSubtreeAdmittedActiveWorkloads(ancestor.Name, ancestor.admittedWorkloadsCount, clVals, c.roleTracker)
 	}
-	metrics.ReportAdmittedActiveWorkloads(c.Name, c.admittedWorkloadsCount, c.customMetricLabelValues, c.roleTracker)
-	metrics.ReportReservingActiveWorkloads(c.Name, len(c.Workloads), c.customMetricLabelValues, c.roleTracker)
+	metrics.ReportReservingActiveWorkloads(c.Name, len(c.Workloads), clVals, c.roleTracker)
+}
+
+func (c *clusterQueue) reportAdmittedActiveWorkloads(wlRef workload.Reference, wl *kueue.Workload, incr int) {
+	metrics.ReportAdmittedActiveWorkloads(c.Name, incr, c.getLabelValuesFor(wlRef), c.roleTracker)
+
+	qKey := queue.KeyFromWorkload(wl)
+	if lq, ok := c.localQueues[qKey]; ok && lq.shouldExposeMetrics(c.lqMetrics) {
+		lqRef := metrics.LocalQueueReference{Name: wl.Spec.QueueName, Namespace: wl.Namespace}
+		metrics.ReportLocalQueueAdmittedActiveWorkloads(lqRef, incr, c.getLQLabelValuesFor(wlRef, string(qKey)), c.roleTracker)
+	}
+}
+
+func (c *clusterQueue) resyncAdmittedActiveWorkloads() {
+	for wlRef, wl := range c.Workloads {
+		if workload.IsActive(wl.Obj) && workload.IsAdmitted(wl.Obj) {
+			c.reportAdmittedActiveWorkloads(wlRef, wl.Obj, 1)
+		}
+	}
 }
 
 func (c *clusterQueue) reportResourceMetrics(fairSharingEnabled bool) {
@@ -526,23 +566,24 @@ func (c *clusterQueue) reportResourceMetrics(fairSharingEnabled bool) {
 		cohort = c.Parent().GetName()
 	}
 	cqName := string(c.Name)
+	clVals := c.GetCustomLabelValues()
 	for fr, quota := range c.resourceNode.Quotas {
 		fName, rName := string(fr.Flavor), string(fr.Resource)
-		nominal := resourceFloat(fr.Resource, quota.Nominal.Int64())
+		nominal := quota.Nominal.AsApproximateFloat64(fr.Resource)
 		var borrowing, lending float64
 		if quota.BorrowingLimit == nil {
 			borrowing = math.Inf(1)
 		} else {
-			borrowing = resourceFloat(fr.Resource, quota.BorrowingLimit.Int64())
+			borrowing = quota.BorrowingLimit.AsApproximateFloat64(fr.Resource)
 		}
 		if quota.LendingLimit == nil {
 			lending = math.Inf(1)
 		} else {
-			lending = resourceFloat(fr.Resource, quota.LendingLimit.Int64())
+			lending = quota.LendingLimit.AsApproximateFloat64(fr.Resource)
 		}
-		metrics.ReportClusterQueueQuotas(cohort, cqName, fName, rName, nominal, borrowing, lending, c.customMetricLabelValues, c.roleTracker)
-		metrics.ReportClusterQueueResourceReservations(cohort, cqName, fName, rName, resourceFloat(fr.Resource, c.resourceNode.Usage[fr].Int64()), c.customMetricLabelValues, c.roleTracker)
-		metrics.ReportClusterQueueResourceUsage(cohort, cqName, fName, rName, resourceFloat(fr.Resource, c.AdmittedUsage[fr].Int64()), c.customMetricLabelValues, c.roleTracker)
+		metrics.ReportClusterQueueQuotas(cohort, cqName, fName, rName, nominal, borrowing, lending, clVals, c.roleTracker)
+		metrics.ReportClusterQueueResourceReservations(cohort, cqName, fName, rName, c.resourceNode.Usage[fr].AsApproximateFloat64(fr.Resource), clVals, c.roleTracker)
+		metrics.ReportClusterQueueResourceUsage(cohort, cqName, fName, rName, c.AdmittedUsage[fr].AsApproximateFloat64(fr.Resource), clVals, c.roleTracker)
 	}
 	if fairSharingEnabled {
 		c.reportWeightedShare(cohort)
@@ -550,32 +591,48 @@ func (c *clusterQueue) reportResourceMetrics(fairSharingEnabled bool) {
 }
 
 func (c *clusterQueue) reportWeightedShare(cohort kueue.CohortReference) {
+	if c.HasParent() && hierarchy.HasCycle(c.Parent()) {
+		return
+	}
 	drs := dominantResourceShare(c, nil)
 	weightedShare := drs.PreciseWeightedShare()
 	if weightedShare == math.Inf(1) {
 		weightedShare = math.NaN()
 	}
-	metrics.ReportClusterQueueWeightedShare(c.Name, cohort, weightedShare, c.customMetricLabelValues, c.roleTracker)
+	metrics.ReportClusterQueueWeightedShare(c.Name, cohort, weightedShare, c.GetCustomLabelValues(), c.roleTracker)
 }
 
 // updateWorkloadUsage updates the usage of the ClusterQueue for the workload
 // and the number of admitted workloads for local queues.
 func (c *clusterQueue) updateWorkloadUsage(log logr.Logger, wi *workload.Info, op usageOp) {
 	admitted := workload.IsAdmitted(wi.Obj)
-	frUsage := wi.FlavorResourceUsage()
-	for fr, q := range frUsage {
-		if op == add {
-			addUsage(c, fr, q)
-		}
-		if op == subtract {
-			removeUsage(c, fr, q)
+	frUsage := wi.ResourceUsage().Assigned
+	if c.HasParent() && hierarchy.HasCycle(c.Parent()) {
+		// Keep the ClusterQueue's usage current while the invalid hierarchy is
+		// present. Ancestor usage is rebuilt from ClusterQueues once the cycle is resolved.
+		// addUsage/removeUsage are recursive through parentHRN() and would infinite-loop
+		// on a cyclic cohort hierarchy.
+		updateFlavorUsage(frUsage, c.resourceNode.Usage, op)
+	} else {
+		for fr, q := range frUsage {
+			if op == add {
+				addUsage(c, fr, q)
+			}
+			if op == subtract {
+				removeUsage(c, fr, q)
+			}
 		}
 	}
 	c.updateWorkloadTASUsage(log, wi, op)
 	if admitted {
 		updateFlavorUsage(frUsage, c.AdmittedUsage, op)
-		c.Parent().updateAdmittedWorkloadsCount(op.asSignedOne())
-		c.admittedWorkloadsCount += op.asSignedOne()
+
+		incr := op.asSignedOne()
+		c.Parent().updateAdmittedWorkloadsCount(incr)
+		c.admittedWorkloadsCount += incr
+
+		wlRef := workload.Key(wi.Obj)
+		c.reportAdmittedActiveWorkloads(wlRef, wi.Obj, incr)
 	}
 	qKey := queue.KeyFromWorkload(wi.Obj)
 	if lq, ok := c.localQueues[qKey]; ok {
@@ -589,6 +646,20 @@ func (c *clusterQueue) updateWorkloadUsage(log logr.Logger, wi *workload.Info, o
 			lq.reportActiveWorkloads(c.roleTracker)
 		}
 	}
+}
+
+func (c *clusterQueue) getLabelValuesFor(wlRef workload.Reference) []string {
+	return c.customLabels.GetFor(map[cfg.SourceKind]string{
+		cfg.SourceKindWorkload:     string(wlRef),
+		cfg.SourceKindClusterQueue: string(c.Name),
+	})
+}
+
+func (c *clusterQueue) getLQLabelValuesFor(wlRef workload.Reference, lqKey string) []string {
+	return c.customLabels.GetFor(map[cfg.SourceKind]string{
+		cfg.SourceKindWorkload:   string(wlRef),
+		cfg.SourceKindLocalQueue: lqKey,
+	})
 }
 
 func (c *clusterQueue) updateWorkloadTASUsage(log logr.Logger, wi *workload.Info, op usageOp) {
@@ -611,13 +682,16 @@ func (c *clusterQueue) updateWorkloadTASUsage(log logr.Logger, wi *workload.Info
 }
 
 func updateFlavorUsage(newUsage resources.FlavorResourceQuantities, oldUsage resources.FlavorResourceQuantities, op usageOp) {
-	sign := int64(op.asSignedOne())
 	for fr, q := range newUsage {
-		oldUsage[fr] = oldUsage[fr].AddInt64(utilmath.SaturatingMul(sign, q.Int64()))
+		if op == add {
+			oldUsage[fr] = oldUsage[fr].Add(q)
+		} else {
+			oldUsage[fr] = oldUsage[fr].Sub(q)
+		}
 	}
 }
 
-func (c *clusterQueue) addLocalQueue(q *kueue.LocalQueue, customLabelValues []string) error {
+func (c *clusterQueue) addLocalQueue(q *kueue.LocalQueue) error {
 	qKey := queueKey(q)
 	if _, ok := c.localQueues[qKey]; ok {
 		return errQueueAlreadyExists
@@ -625,16 +699,20 @@ func (c *clusterQueue) addLocalQueue(q *kueue.LocalQueue, customLabelValues []st
 	// We need to count the workloads, because they could have been added before
 	// receiving the queue add event.
 	qImpl := &LocalQueue{
-		key:                     qKey,
-		reservingWorkloads:      0,
-		totalReserved:           make(resources.FlavorResourceQuantities),
-		customMetricLabelValues: customLabelValues,
-		labels:                  q.GetLabels(),
+		key:                qKey,
+		reservingWorkloads: 0,
+		totalReserved:      make(resources.FlavorResourceQuantities),
+		customLabels:       c.customLabels,
+		labels:             q.GetLabels(),
+		resourceFormatter:  c.resourceFormatter,
+	}
+	if features.Enabled(features.CustomMetricLabels) {
+		c.customLabels.LQStore(qKey, q.Labels, q.Annotations)
 	}
 	qImpl.resetFlavorsAndResources(c.resourceNode.Usage, c.AdmittedUsage)
 	for _, wl := range c.Workloads {
 		if workloadBelongsToLocalQueue(wl.Obj, q) {
-			frq := wl.FlavorResourceUsage()
+			frq := wl.ResourceUsage().Assigned
 			updateFlavorUsage(frq, qImpl.totalReserved, add)
 			qImpl.reservingWorkloads++
 			if workload.IsAdmitted(wl.Obj) {

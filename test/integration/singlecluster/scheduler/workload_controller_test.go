@@ -113,10 +113,10 @@ var _ = ginkgo.Describe("Workload controller with scheduler", func() {
 					*utiltestingapi.MakeFlavorQuotas(flavorOnDemand).Resource(resourceGPU, "5", "5").Obj()).
 				Cohort("cohort").
 				Obj()
-			util.MustCreate(ctx, k8sClient, clusterQueue)
+			util.CreateClusterQueuesAndWaitForActive(ctx, k8sClient, clusterQueue)
 
 			localQueue = utiltestingapi.MakeLocalQueue("queue", ns.Name).ClusterQueue(clusterQueue.Name).Obj()
-			util.MustCreate(ctx, k8sClient, localQueue)
+			util.CreateLocalQueuesAndWaitForActive(ctx, k8sClient, localQueue)
 		})
 
 		ginkgo.AfterEach(func() {
@@ -1081,12 +1081,6 @@ var _ = ginkgo.Describe("Workload controller with scheduler", func() {
 			wlPreserved := utiltestingapi.MakeWorkload("preserved-wl", ns.Name).
 				Queue(kueue.LocalQueueName(localQueue.Name)).
 				Request(corev1.ResourceCPU, "1").
-				Condition(metav1.Condition{
-					Type:    kueue.WorkloadQuotaReserved,
-					Status:  metav1.ConditionFalse,
-					Reason:  kueue.WorkloadQuotaReservedReasonWaitingForQuota,
-					Message: detailedMsg,
-				}).
 				Obj()
 			util.MustCreate(ctx, k8sClient, wlPreserved)
 
@@ -1099,24 +1093,28 @@ var _ = ginkgo.Describe("Workload controller with scheduler", func() {
 			util.ExpectPendingWorkloadsMetric(clusterQueue, 0, 2)
 
 			ginkgo.By("Triggering a reconcile on the preserved workload and verifying its detailed condition is not overwritten")
+
+			// First, wait for the condition to reach the desired state
 			gomega.Eventually(func(g gomega.Gomega) {
 				var w kueue.Workload
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(wlPreserved), &w)).Should(gomega.Succeed())
-				if w.Annotations == nil {
-					w.Annotations = make(map[string]string)
-				}
-				w.Annotations["trigger"] = "reconcile"
-				g.Expect(k8sClient.Update(ctx, &w)).Should(gomega.Succeed())
+				cond := apimeta.FindStatusCondition(w.Status.Conditions, kueue.WorkloadQuotaReserved)
+				g.Expect(cond).ToNot(gomega.BeNil())
+				g.Expect(cond.Status).To(gomega.Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(gomega.Equal(kueue.WorkloadQuotaReservedReasonWaitingForQuota))
+				g.Expect(cond.Message).To(gomega.Equal(detailedMsg))
 			}, util.Timeout, util.Interval).Should(gomega.Succeed())
 
+			// Then verify it stays that way
 			gomega.Consistently(func(g gomega.Gomega) {
 				var w kueue.Workload
 				g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(wlPreserved), &w)).Should(gomega.Succeed())
 				cond := apimeta.FindStatusCondition(w.Status.Conditions, kueue.WorkloadQuotaReserved)
 				g.Expect(cond).ToNot(gomega.BeNil())
+				g.Expect(cond.Status).To(gomega.Equal(metav1.ConditionFalse))
 				g.Expect(cond.Reason).To(gomega.Equal(kueue.WorkloadQuotaReservedReasonWaitingForQuota))
 				g.Expect(cond.Message).To(gomega.Equal(detailedMsg))
-			}, util.ConsistentDuration, util.Interval).Should(gomega.Succeed())
+			}, util.ConsistentDuration, util.ShortInterval).Should(gomega.Succeed())
 		})
 	})
 })

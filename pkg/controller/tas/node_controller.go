@@ -57,6 +57,7 @@ import (
 	utilpod "sigs.k8s.io/kueue/pkg/util/pod"
 	utilpodset "sigs.k8s.io/kueue/pkg/util/podset"
 	"sigs.k8s.io/kueue/pkg/util/roletracker"
+	utilslices "sigs.k8s.io/kueue/pkg/util/slices"
 	utiltas "sigs.k8s.io/kueue/pkg/util/tas"
 	"sigs.k8s.io/kueue/pkg/workload"
 	workloadevict "sigs.k8s.io/kueue/pkg/workload/evict"
@@ -137,16 +138,29 @@ func (r *nodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	log := ctrl.LoggerFrom(ctx)
 	log.V(2).Info("Reconcile Node")
 
-	var node corev1.Node
-	err := r.client.Get(ctx, req.NamespacedName, &node)
-	if client.IgnoreNotFound(err) != nil {
+	// req.Name is the node's kubernetes.io/hostname label value, which is what
+	// hostname-level TopologyAssignments and Pod nodeSelectors refer to. It can
+	// differ from the Node name, so the Node is looked up by the label.
+	var nodes corev1.NodeList
+	if err := r.client.List(ctx, &nodes, client.MatchingFields{indexer.NodeHostnameKey: req.Name}); err != nil {
 		return ctrl.Result{}, err
 	}
-	nodeExists := err == nil
+	if len(nodes.Items) > 1 {
+		// The label is not guaranteed to be unique. Picking one of the Nodes would
+		// apply its readiness and its Pods to the workloads assigned to the other,
+		// and no retry can disambiguate them, so skip the hostname. Adding or
+		// removing a Node triggers another reconcile once the conflict is resolved.
+		log.Error(nil, "Multiple Nodes share the hostname, skipping the reconcile",
+			"nodes", utilslices.Map(nodes.Items, func(n *corev1.Node) string { return n.Name }))
+		return ctrl.Result{}, nil
+	}
+	nodeExists := len(nodes.Items) > 0
 
+	var node *corev1.Node
 	var readyCondition *corev1.NodeCondition
 	if nodeExists {
-		readyCondition = utiltas.GetNodeCondition(&node, corev1.NodeReady)
+		node = &nodes.Items[0]
+		readyCondition = utiltas.GetNodeCondition(node, corev1.NodeReady)
 	}
 
 	var timerExpired bool
@@ -176,7 +190,7 @@ func (r *nodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	if timerExpired {
+	if features.Enabled(features.TASReplaceNodeDueToNotReadyOverFixedTime) && timerExpired {
 		log.V(3).Info("Node is not ready and NodeFailureDelay timer expired, marking as failed")
 		evictedWorkloads, err := r.handleUnhealthyNode(ctx, req.Name, affectedWorkloads)
 		if err != nil {
@@ -197,7 +211,7 @@ func (r *nodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 	affectedWorkloads = affectedWorkloads.Union(latePodWorkloads)
 
-	return r.reconcileWorkloadsOnNode(ctx, req.Name, &node, affectedWorkloads, nodeSelectorPodsByWorkload)
+	return r.reconcileWorkloadsOnNode(ctx, req.Name, node, affectedWorkloads, nodeSelectorPodsByWorkload)
 }
 
 var _ reconcile.Reconciler = (*nodeReconciler)(nil)
@@ -258,7 +272,7 @@ func newNodeReconciler(
 	return &nodeReconciler{
 		client:      client,
 		cache:       cache,
-		logName:     TASNodeController,
+		logName:     "tas-node-reconciler",
 		clock:       clock.RealClock{},
 		recorder:    recorder,
 		roleTracker: roleTracker,
@@ -283,7 +297,9 @@ func (r *nodeReconciler) SetupWithManager(mgr ctrl.Manager, cfg *config.Configur
 		WatchesRawSource(source.TypedKind(
 			mgr.GetCache(),
 			&corev1.Node{},
-			&handler.TypedEnqueueRequestForObject[*corev1.Node]{},
+			handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, node *corev1.Node) []reconcile.Request {
+				return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: utiltas.NodeHostname(node)}}}
+			}),
 			r,
 		)).
 		Watches(&corev1.Pod{}, podHandler).
@@ -381,12 +397,12 @@ func (r *nodeReconciler) getWorkloadStatus(
 		// If a pod arrives late (via nodeSelector) and its node is no longer part
 		// of the topology assignment, we must always check pods
 		// to catch and fail the stray pod.
-		return r.checkPodsOnNode(ctx, nodeName, wl, false, hasTASAssignment, nodeSelectorAssignedPods)
+		return r.checkPodsOnNode(ctx, node.Name, wl, false, hasTASAssignment, nodeSelectorAssignedPods)
 	case !ready:
 		if !features.Enabled(features.TASReplaceNodeOnPodTermination) {
 			return workloadHealthCheck{status: workloadUnhealthy}, nil
 		}
-		return r.checkPodsOnNode(ctx, nodeName, wl, false, hasTASAssignment, nodeSelectorAssignedPods)
+		return r.checkPodsOnNode(ctx, node.Name, wl, false, hasTASAssignment, nodeSelectorAssignedPods)
 	case !features.Enabled(features.TASReplaceNodeOnNodeTaints):
 		return workloadHealthCheck{status: workloadHealthy}, nil
 	case !hasSchedulingTaints(node.Spec.Taints):
@@ -402,10 +418,10 @@ func (r *nodeReconciler) getWorkloadStatus(
 			if !features.Enabled(features.TASReplaceNodeOnPodTermination) {
 				return workloadHealthCheck{status: workloadUnhealthy}, nil
 			}
-			return r.checkPodsOnNode(ctx, nodeName, wl, true, hasTASAssignment, nodeSelectorAssignedPods)
+			return r.checkPodsOnNode(ctx, node.Name, wl, true, hasTASAssignment, nodeSelectorAssignedPods)
 		}
 		if len(temporarilyTolerated) > 0 {
-			return r.checkPodsOnNode(ctx, nodeName, wl, false, hasTASAssignment, nodeSelectorAssignedPods)
+			return r.checkPodsOnNode(ctx, node.Name, wl, false, hasTASAssignment, nodeSelectorAssignedPods)
 		}
 		return workloadHealthCheck{status: workloadHealthy}, nil
 	}
@@ -450,7 +466,7 @@ func (r *nodeReconciler) podSetsWithEffectiveTolerationsOnNode(ctx context.Conte
 				}
 			}
 		}
-		if err := podsetinfo.Merge(&effective.Template.ObjectMeta, &effective.Template.Spec, info); err != nil {
+		if err := podsetinfo.Merge(ctrl.LoggerFrom(ctx), &effective.Template.ObjectMeta, &effective.Template.Spec, info); err != nil {
 			return nil, err
 		}
 		result = append(result, *effective)
@@ -486,10 +502,10 @@ func (r *nodeReconciler) checkPodsOnNode(
 
 // evictWorkloadIfNeeded idempotently evicts the workload when the node has failed.
 // It returns whether the node was evicted, and whether an error was encountered.
-func (r *nodeReconciler) evictWorkloadIfNeeded(ctx context.Context, wl *kueue.Workload, nodeName string) (bool, error) {
+func (r *nodeReconciler) evictWorkloadIfNeeded(ctx context.Context, log logr.Logger, wl *kueue.Workload, nodeName string) (bool, error) {
 	if workload.HasUnhealthyNodes(wl) && !workload.HasUnhealthyNode(wl, nodeName) && !workloadevict.IsEvicted(wl) {
 		unhealthyNodeNames := workload.UnhealthyNodeNames(wl)
-		log := ctrl.LoggerFrom(ctx).WithValues("unhealthyNodes", unhealthyNodeNames)
+		log = log.WithValues("unhealthyNodes", unhealthyNodeNames)
 		log.V(3).Info("Evicting workload due to multiple node failures")
 		allUnhealthyNodeNames := append(unhealthyNodeNames, nodeName)
 		evictionMsg := fmt.Sprintf(nodeMultipleFailuresEvictionMessageFormat, strings.Join(allUnhealthyNodeNames, ", "))
@@ -529,7 +545,7 @@ func (r *nodeReconciler) handleUnhealthyNode(ctx context.Context, nodeName strin
 			continue
 		}
 		// evict workload when workload already has a different node marked for replacement
-		evictedNow, err := r.evictWorkloadIfNeeded(ctx, &wl, nodeName)
+		evictedNow, err := r.evictWorkloadIfNeeded(ctx, wlLog, &wl, nodeName)
 		if err != nil {
 			workloadProcessingErrors = append(workloadProcessingErrors, err)
 			continue
@@ -712,7 +728,7 @@ func (r *nodeReconciler) getPodsToTerminate(ctx context.Context, wl *kueue.Workl
 
 func (r *nodeReconciler) hasProgressingPods(ctx context.Context, wl *kueue.Workload, nodeName string) (bool, error) {
 	sliceName := workloadslicing.SliceName(wl)
-	pods, err := ListPodsForWorkloadSlice(ctx, r.client, wl.Namespace, sliceName, client.MatchingFields{
+	pods, err := workloadslicing.ListPodsForWorkloadSlice(ctx, r.client, wl.Namespace, sliceName, client.MatchingFields{
 		indexer.PodNodeNameKey: nodeName,
 	})
 	if err != nil {
@@ -817,9 +833,13 @@ func (h *nodeFailurePodHandler) queueReconcileForPod(object client.Object, q wor
 
 	// queue pods that are failed or being deleted
 	if len(pod.Spec.NodeName) > 0 && (!pod.DeletionTimestamp.IsZero() || utilpod.IsTerminated(pod)) {
+		hostname := pod.Spec.NodeSelector[corev1.LabelHostname]
+		if len(hostname) == 0 {
+			hostname = pod.Spec.NodeName
+		}
 		req := reconcile.Request{
 			NamespacedName: types.NamespacedName{
-				Name: pod.Spec.NodeName,
+				Name: hostname,
 			},
 		}
 		q.AddAfter(req, reconcileBatchPeriod)

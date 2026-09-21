@@ -25,6 +25,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
+	configapi "sigs.k8s.io/kueue/apis/config/v1beta2"
+	kueuealpha "sigs.k8s.io/kueue/apis/kueue/v1alpha1"
 	kueue "sigs.k8s.io/kueue/apis/kueue/v1beta2"
 	"sigs.k8s.io/kueue/pkg/constants"
 	"sigs.k8s.io/kueue/pkg/features"
@@ -40,12 +42,24 @@ type LocalQueueReference struct {
 	Namespace string
 }
 
+type PreemptionTargetRecomputationResult string
+
 const (
 	AdmissionResultSuccess      AdmissionResult = "success"
 	AdmissionResultInadmissible AdmissionResult = "inadmissible"
 
 	PendingStatusActive       = "active"
 	PendingStatusInadmissible = "inadmissible"
+
+	// PreemptionTargetRecomputationResultNewTargets is recorded when the
+	// recomputation selects non-overlapping preemption targets.
+	PreemptionTargetRecomputationResultNewTargets PreemptionTargetRecomputationResult = "new_targets"
+	// PreemptionTargetRecomputationResultDeferredFit is recorded when the
+	// workload will fit only after earlier preemptions in the cycle complete.
+	PreemptionTargetRecomputationResultDeferredFit PreemptionTargetRecomputationResult = "deferred_fit"
+	// PreemptionTargetRecomputationResultSkipped is recorded when the
+	// recomputation does not resolve the overlap and the workload is skipped.
+	PreemptionTargetRecomputationResultSkipped PreemptionTargetRecomputationResult = "skipped"
 
 	// CQStatusPending means the ClusterQueue is accepted but not yet active,
 	// this can be because of:
@@ -79,9 +93,25 @@ var (
 	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",cluster="the name of the worker cluster",replica_role="one of `leader`, `follower`, or `standalone`"
 	MultiKueueWorkloadsDispatchedTotal *prometheus.CounterVec
 
+	// +metricsdoc:group=health
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",cluster="the name of the worker cluster",replica_role="one of `leader`, `follower`, or `standalone`"
+	MultiKueueWorkloadsAdmittedTotal *prometheus.CounterVec
+
+	// +metricsdoc:group=health
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",cluster="the name of the worker cluster",reason="the eviction reason reported by the worker cluster",replica_role="one of `leader`, `follower`, or `standalone`"
+	MultiKueueWorkloadsEvictedTotal *prometheus.CounterVec
+
+	// +metricsdoc:group=health
+	// +metricsdoc:labels=cluster_queue="the name of the manager ClusterQueue referencing the worker cluster",cluster="the name of the worker cluster",active="one of `True`, `False`, or `Unknown`",replica_role="one of `leader`, `follower`, or `standalone`"
+	MultiKueueClusterByStatus *prometheus.GaugeVec
+
 	// +metricsdoc:group=clusterqueue
 	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",replica_role="one of `leader`, `follower`, or `standalone`"
 	AdmissionCyclePreemptionSkips *prometheus.GaugeVec
+
+	// +metricsdoc:group=clusterqueue
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",result="one of `new_targets`, `deferred_fit`, or `skipped`",replica_role="one of `leader`, `follower`, or `standalone`"
+	PreemptionTargetRecomputationsTotal *prometheus.CounterVec
 
 	// Metrics tied to the queue system.
 
@@ -92,6 +122,10 @@ var (
 	// +metricsdoc:group=clusterqueue
 	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",status="status label (varies by metric)",replica_role="one of `leader`, `follower`, or `standalone`"
 	PendingWorkloads *prometheus.GaugeVec
+
+	// +metricsdoc:group=clusterqueue
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",status="one of `active` or `inadmissible`",replica_role="one of `leader`, `follower`, or `standalone`"
+	PendingSchedulingHashes *prometheus.GaugeVec
 
 	// +metricsdoc:group=localqueue
 	// +metricsdoc:labels=name="the name of the LocalQueue",namespace="the namespace of the LocalQueue",status="status label (varies by metric)",replica_role="one of `leader`, `follower`, or `standalone`"
@@ -120,6 +154,14 @@ var (
 	// +metricsdoc:group=localqueue
 	// +metricsdoc:labels=name="the name of the LocalQueue",namespace="the namespace of the LocalQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
 	LocalQueueFinishedWorkloadsTotal *prometheus.CounterVec
+
+	// +metricsdoc:group=clusterqueue
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
+	ExecutionTimeSeconds *prometheus.HistogramVec
+
+	// +metricsdoc:group=localqueue
+	// +metricsdoc:labels=name="the name of the LocalQueue",namespace="the namespace of the LocalQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
+	LocalQueueExecutionTimeSeconds *prometheus.HistogramVec
 
 	// +metricsdoc:group=clusterqueue
 	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
@@ -153,6 +195,10 @@ var (
 	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
 	AdmittedUntilReadyWaitTime *prometheus.HistogramVec
 
+	// +metricsdoc:group=optional_wait_for_pods_ready
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
+	WorkloadRecoveryWaitTime *prometheus.HistogramVec
+
 	// +metricsdoc:group=localqueue
 	// +metricsdoc:labels=name="the name of the LocalQueue",namespace="the namespace of the LocalQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
 	LocalQueueAdmissionWaitTime *prometheus.HistogramVec
@@ -172,6 +218,10 @@ var (
 	// +metricsdoc:group=optional_wait_for_pods_ready
 	// +metricsdoc:labels=name="the name of the LocalQueue",namespace="the namespace of the LocalQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
 	LocalQueueAdmittedUntilReadyWaitTime *prometheus.HistogramVec
+
+	// +metricsdoc:group=optional_wait_for_pods_ready
+	// +metricsdoc:labels=name="the name of the LocalQueue",namespace="the namespace of the LocalQueue",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
+	LocalQueueWorkloadRecoveryWaitTime *prometheus.HistogramVec
 
 	// +metricsdoc:group=clusterqueue
 	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",reason="eviction or preemption reason",underlying_cause="root cause for eviction",priority_class="the priority class name",replica_role="one of `leader`, `follower`, or `standalone`"
@@ -204,7 +254,7 @@ var (
 	WorkloadCreationLatency *prometheus.HistogramVec
 
 	// +metricsdoc:group=health
-	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",is_group="whether the gate removal applies to a pod group or a single pod",name="one of `kueue.x-k8s.io/topology`, `kueue.x-k8s.io/admission`, or `kueue.x-k8s.io/elastic-job`"
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",is_group="whether the gate removal applies to a pod group or a single pod",name="one of `kueue.x-k8s.io/topology`, `kueue.x-k8s.io/admission`, or `kueue.x-k8s.io/elastic-job`",replica_role="one of `leader`, `follower`, or `standalone`"
 	PodSchedulingGateRemovalSeconds *prometheus.HistogramVec
 
 	// Metrics tied to the cache.
@@ -232,6 +282,14 @@ var (
 	// +metricsdoc:group=localqueue
 	// +metricsdoc:labels=name="the name of the LocalQueue",namespace="the namespace of the LocalQueue",active="one of `True`, `False`, or `Unknown`",replica_role="one of `leader`, `follower`, or `standalone`"
 	LocalQueueByStatus *prometheus.GaugeVec
+
+	// +metricsdoc:group=clusterqueue
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",reason="the reason why the workload is not admitted",underlying_cause="the underlying cause for the quota reservation deficit",replica_role="one of `leader`, `follower`, or `standalone`"
+	UnadmittedWorkloads *prometheus.GaugeVec
+
+	// +metricsdoc:group=localqueue
+	// +metricsdoc:labels=name="the name of the LocalQueue",namespace="the namespace of the LocalQueue",cluster_queue="the name of the ClusterQueue",reason="the reason why the workload is not admitted",underlying_cause="the underlying cause for the quota reservation deficit",replica_role="one of `leader`, `follower`, or `standalone`"
+	LocalQueueUnadmittedWorkloads *prometheus.GaugeVec
 
 	// Optional cluster queue metrics
 
@@ -296,11 +354,11 @@ var (
 	CohortSubtreeAdmittedActiveWorkloads *prometheus.GaugeVec
 
 	// +metricsdoc:group=cohort
-	// +metricsdoc:labels=cohort="the name of the Cohort",parent_cohort="the direct parent Cohort name, empty if this Cohort has no parent",root_cohort="the root Cohort name in the hierarchy",replica_role="one of `leader`, `follower`, or `standalone`"
+	// +metricsdoc:labels=cohort="the name of the Cohort",parent_cohort="the direct parent Cohort name, empty if this Cohort has no parent",root_cohort="the root Cohort name in the hierarchy",dynamic_quota_orchestrator="name of the dynamic quota orchestrator, empty if none",replica_role="one of `leader`, `follower`, or `standalone`"
 	CohortInfo *prometheus.GaugeVec
 
 	// +metricsdoc:group=clusterqueue
-	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",parent_cohort="the direct parent Cohort name, empty if this ClusterQueue has no Cohort",root_cohort="the root Cohort name in the hierarchy, empty if this ClusterQueue has no Cohort",replica_role="one of `leader`, `follower`, or `standalone`"
+	// +metricsdoc:labels=cluster_queue="the name of the ClusterQueue",parent_cohort="the direct parent Cohort name, empty if this ClusterQueue has no Cohort",root_cohort="the root Cohort name in the hierarchy, empty if this ClusterQueue has no Cohort",dynamic_quota_orchestrator="name of the dynamic quota orchestrator, empty if none",replica_role="one of `leader`, `follower`, or `standalone`"
 	ClusterQueueInfo *prometheus.GaugeVec
 )
 
@@ -316,6 +374,7 @@ const (
 	gaugeCleanupScopeLocalQueueCache
 	gaugeCleanupScopeLocalQueueResource
 	gaugeCleanupScopeCohort
+	gaugeCleanupScopeMultiKueueCluster
 )
 
 var gaugeVecsByScope map[gaugeCleanupScope][]*prometheus.GaugeVec
@@ -328,8 +387,12 @@ func trackGaugeVec(g *prometheus.GaugeVec, scopes ...gaugeCleanupScope) *prometh
 	return g
 }
 
-func InitMetricVectors(extraLabels []string) {
+func InitMetricVectors(cl *CustomLabels) {
 	gaugeVecsByScope = make(map[gaugeCleanupScope][]*prometheus.GaugeVec)
+
+	cohortMetricLabels := cl.LabelNames(configapi.SourceKindCohort)
+	clusterQueueMetricsLabels := cl.LabelNames(configapi.SourceKindClusterQueue)
+	localQueueMetricsLabels := cl.LabelNames(configapi.SourceKindLocalQueue)
 
 	AdmissionAttemptsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -362,15 +425,55 @@ The label 'result' can have the following values:
 		}, []string{"cluster_queue", "cluster", "replica_role"},
 	)
 
+	MultiKueueWorkloadsAdmittedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Subsystem: constants.MultiKueueName,
+			Name:      "workloads_admitted_total",
+			Help:      `The total number of remote workload admissions on a worker cluster, per 'cluster_queue' and 'cluster'. A workload may be counted more than once if it is evicted and re-admitted.`,
+		}, []string{"cluster_queue", "cluster", "replica_role"},
+	)
+
+	MultiKueueWorkloadsEvictedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Subsystem: constants.MultiKueueName,
+			Name:      "workloads_evicted_total",
+			Help:      `The total number of remote workload evictions on a worker cluster, per 'cluster_queue', 'cluster' and 'reason'. A workload may be counted more than once if it is re-admitted and evicted again.`,
+		}, []string{"cluster_queue", "cluster", "reason", "replica_role"},
+	)
+	MultiKueueClusterByStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Subsystem: constants.MultiKueueName,
+			Name:      "cluster_status",
+			Help: `Reports a MultiKueue worker 'cluster' with its 'active' status (with possible values 'True', 'False', or 'Unknown'), per manager 'cluster_queue' referencing it, mirroring the Active condition of the MultiKueueCluster, whose reason explains why a cluster is not active.
+For a pair of 'cluster_queue' and worker cluster, the metric only reports a value of 1 for one of the statuses.
+A worker cluster shared by several ClusterQueues is reported once per ClusterQueue, so use 'max by (cluster)' rather than 'sum' to count distinct workers.`,
+		}, []string{"cluster_queue", "cluster", "active", "replica_role"},
+	)
+	trackGaugeVec(MultiKueueClusterByStatus, gaugeCleanupScopeMultiKueueCluster)
+
 	AdmissionCyclePreemptionSkips = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Subsystem: constants.KueueName,
 			Name:      "admission_cycle_preemption_skips",
 			Help: "The number of Workloads in the ClusterQueue that got preemption candidates " +
 				"but had to be skipped because other ClusterQueues needed the same resources in the same cycle",
-		}, append([]string{"cluster_queue", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(AdmissionCyclePreemptionSkips, gaugeCleanupScopeClusterQueue)
+
+	PreemptionTargetRecomputationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Subsystem: constants.KueueName,
+			Name:      "preemption_target_recomputations_total",
+			Help: `The total number of preemption target recomputations triggered when a workload's preemption
+targets overlap with targets selected by another workload in the same scheduling cycle.
+The label 'result' can have the following values:
+- 'new_targets' means the recomputation resolved the overlap by selecting non-overlapping targets.
+- 'deferred_fit' means the workload will fit only after earlier preemptions in the cycle complete.
+- 'skipped' means recomputation produced neither a deferred fit nor a fit with non-overlapping targets, including cases where overlap is removed but the workload still fails the fit check.
+Globally configured custom ClusterQueue labels are also appended to the base labels.`,
+		}, append([]string{"cluster_queue", "result", "replica_role"}, clusterQueueMetricsLabels...),
+	)
 
 	buildInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -391,9 +494,21 @@ The label 'result' can have the following values:
 'status' can have the following values:
 - "active" means that the workloads are in the admission queue.
 - "inadmissible" means there was a failed admission attempt for these workloads and they won't be retried until cluster conditions, which could make this workload admissible, change`,
-		}, append([]string{"cluster_queue", "status", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "status", "replica_role"}, cl.LabelNames(configapi.SourceKindClusterQueue, configapi.SourceKindWorkload)...),
 	)
 	trackGaugeVec(PendingWorkloads, gaugeCleanupScopeClusterQueue)
+
+	PendingSchedulingHashes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Subsystem: constants.KueueName,
+			Name:      "pending_scheduling_hashes",
+			Help: `The number of unique pending scheduling equivalence hashes, per 'cluster_queue' and 'status'. Reported only when SchedulingEquivalenceHashing is enabled.
+'status' can have the following values:
+- "active" means that the workloads are in the admission queue.
+- "inadmissible" means there was a failed admission attempt for these workloads and they won't be retried until cluster conditions, which could make this workload admissible, change`,
+		}, append([]string{"cluster_queue", "status", "replica_role"}, clusterQueueMetricsLabels...),
+	)
+	trackGaugeVec(PendingSchedulingHashes, gaugeCleanupScopeClusterQueue)
 
 	LocalQueuePendingWorkloads = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -403,7 +518,7 @@ The label 'result' can have the following values:
 'status' can have the following values:
 - "active" means that the workloads are in the admission queue.
 - "inadmissible" means there was a failed admission attempt for these workloads and they won't be retried until cluster conditions, which could make this workload admissible, change`,
-		}, append([]string{"name", "namespace", "status", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "status", "replica_role"}, cl.LabelNames(configapi.SourceKindLocalQueue, configapi.SourceKindWorkload)...),
 	)
 	trackGaugeVec(LocalQueuePendingWorkloads, gaugeCleanupScopeLocalQueue)
 
@@ -412,7 +527,7 @@ The label 'result' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "finished_workloads",
 			Help:      `The number of finished workloads per 'cluster_queue'.`,
-		}, append([]string{"cluster_queue", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(FinishedWorkloads, gaugeCleanupScopeClusterQueue)
 
@@ -421,7 +536,7 @@ The label 'result' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "local_queue_finished_workloads",
 			Help:      `The number of finished workloads, per 'local_queue'.`,
-		}, append([]string{"name", "namespace", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "replica_role"}, localQueueMetricsLabels...),
 	)
 	trackGaugeVec(LocalQueueFinishedWorkloads, gaugeCleanupScopeLocalQueue)
 
@@ -430,7 +545,7 @@ The label 'result' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "quota_reserved_workloads_total",
 			Help:      "The total number of quota reserved workloads per 'cluster_queue'",
-		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	LocalQueueQuotaReservedWorkloadsTotal = prometheus.NewCounterVec(
@@ -438,7 +553,7 @@ The label 'result' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "local_queue_quota_reserved_workloads_total",
 			Help:      "The total number of quota reserved workloads per 'local_queue'",
-		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, localQueueMetricsLabels...),
 	)
 
 	FinishedWorkloadsTotal = prometheus.NewCounterVec(
@@ -446,7 +561,7 @@ The label 'result' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "finished_workloads_total",
 			Help:      "The total number of finished workloads per 'cluster_queue'",
-		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	LocalQueueFinishedWorkloadsTotal = prometheus.NewCounterVec(
@@ -454,7 +569,25 @@ The label 'result' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "local_queue_finished_workloads_total",
 			Help:      "The total number of finished workloads per 'local_queue'",
-		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, localQueueMetricsLabels...),
+	)
+
+	ExecutionTimeSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Subsystem: constants.KueueName,
+			Name:      "execution_time_seconds",
+			Help:      "The total execution time of a finished admitted workload (from first admission to completion, including time across evict/readmit cycles), per 'cluster_queue'",
+			Buckets:   generateExponentialBuckets(16),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
+	)
+
+	LocalQueueExecutionTimeSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Subsystem: constants.KueueName,
+			Name:      "local_queue_execution_time_seconds",
+			Help:      "The total execution time of a finished admitted workload (from first admission to completion, including time across evict/readmit cycles), per 'local_queue'",
+			Buckets:   generateExponentialBuckets(16),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, localQueueMetricsLabels...),
 	)
 
 	QuotaReservedWaitTime = prometheus.NewHistogramVec(
@@ -463,7 +596,7 @@ The label 'result' can have the following values:
 			Name:      "quota_reserved_wait_time_seconds",
 			Help:      "The time between a workload was created or requeued until it got quota reservation, per 'cluster_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	PodsReadyToEvictedTimeSeconds = prometheus.NewHistogramVec(
@@ -485,7 +618,7 @@ The label 'underlying_cause' can have the following values:
 - "MaximumExecutionTimeExceeded" means that the workload was evicted by Kueue due to maximum execution time exceeded.
 - "RequeuingLimitExceeded" means that the workload was evicted by Kueue due to requeuing limit exceeded.`,
 			Buckets: generateExponentialBuckets(14),
-		}, append([]string{"cluster_queue", "reason", "underlying_cause", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "reason", "underlying_cause", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	LocalQueueQuotaReservedWaitTime = prometheus.NewHistogramVec(
@@ -494,7 +627,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "local_queue_quota_reserved_wait_time_seconds",
 			Help:      "The time between a workload was created or requeued until it got quota reservation, per 'local_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, localQueueMetricsLabels...),
 	)
 
 	AdmittedWorkloadsTotal = prometheus.NewCounterVec(
@@ -502,7 +635,7 @@ The label 'underlying_cause' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "admitted_workloads_total",
 			Help:      "The total number of admitted workloads per 'cluster_queue'",
-		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	LocalQueueAdmittedWorkloadsTotal = prometheus.NewCounterVec(
@@ -510,7 +643,7 @@ The label 'underlying_cause' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "local_queue_admitted_workloads_total",
 			Help:      "The total number of admitted workloads per 'local_queue'",
-		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, cl.LabelNames(configapi.SourceKindLocalQueue, configapi.SourceKindWorkload)...),
 	)
 
 	AdmissionWaitTime = prometheus.NewHistogramVec(
@@ -519,7 +652,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "admission_wait_time_seconds",
 			Help:      "The time between a workload was created or requeued until admission, per 'cluster_queue'",
 			Buckets:   generateExponentialBuckets(16),
-		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	QueuedUntilReadyWaitTime = prometheus.NewHistogramVec(
@@ -528,7 +661,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "ready_wait_time_seconds",
 			Help:      "The time between a workload was created or requeued until ready, per 'cluster_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	AdmittedUntilReadyWaitTime = prometheus.NewHistogramVec(
@@ -537,7 +670,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "admitted_until_ready_wait_time_seconds",
 			Help:      "The time between a workload was admitted until ready, per 'cluster_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	LocalQueueAdmissionWaitTime = prometheus.NewHistogramVec(
@@ -546,7 +679,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "local_queue_admission_wait_time_seconds",
 			Help:      "The time between a workload was created or requeued until admission, per 'local_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, cl.LabelNames(configapi.SourceKindLocalQueue, configapi.SourceKindWorkload)...),
 	)
 
 	AdmissionChecksWaitTime = prometheus.NewHistogramVec(
@@ -555,7 +688,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "admission_checks_wait_time_seconds",
 			Help:      "The time from when a workload got the quota reservation until admission, per 'cluster_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	LocalQueueAdmissionChecksWaitTime = prometheus.NewHistogramVec(
@@ -564,7 +697,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "local_queue_admission_checks_wait_time_seconds",
 			Help:      "The time from when a workload got the quota reservation until admission, per 'local_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, localQueueMetricsLabels...),
 	)
 
 	LocalQueueQueuedUntilReadyWaitTime = prometheus.NewHistogramVec(
@@ -573,7 +706,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "local_queue_ready_wait_time_seconds",
 			Help:      "The time between a workload was created or requeued until ready, per 'local_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, localQueueMetricsLabels...),
 	)
 
 	LocalQueueAdmittedUntilReadyWaitTime = prometheus.NewHistogramVec(
@@ -582,7 +715,25 @@ The label 'underlying_cause' can have the following values:
 			Name:      "local_queue_admitted_until_ready_wait_time_seconds",
 			Help:      "The time between a workload was admitted until ready, per 'local_queue'",
 			Buckets:   generateExponentialBuckets(14),
-		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, localQueueMetricsLabels...),
+	)
+
+	WorkloadRecoveryWaitTime = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Subsystem: constants.KueueName,
+			Name:      "workload_recovery_wait_time_seconds",
+			Help:      "The time between a workload entered recovery until ready, per 'cluster_queue'",
+			Buckets:   generateExponentialBuckets(14),
+		}, append([]string{"cluster_queue", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
+	)
+
+	LocalQueueWorkloadRecoveryWaitTime = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Subsystem: constants.KueueName,
+			Name:      "local_queue_workload_recovery_wait_time_seconds",
+			Help:      "The time between a workload entered recovery until ready, per 'local_queue'",
+			Buckets:   generateExponentialBuckets(14),
+		}, append([]string{"name", "namespace", "priority_class", "replica_role"}, localQueueMetricsLabels...),
 	)
 
 	WorkloadCreationLatency = prometheus.NewHistogramVec(
@@ -591,7 +742,7 @@ The label 'underlying_cause' can have the following values:
 			Name:      "workload_creation_latency_seconds",
 			Help:      "The time between a job was created until its workload was created, per 'job_kind'. Entries are only recorded for objects with generation 1.",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 11),
-		}, append([]string{"job_kind", "replica_role"}, extraLabels...),
+		}, append([]string{"job_kind", "replica_role"}, localQueueMetricsLabels...),
 	)
 
 	PodSchedulingGateRemovalSeconds = prometheus.NewHistogramVec(
@@ -599,7 +750,7 @@ The label 'underlying_cause' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "pod_scheduling_gate_removal_seconds",
 			Help:      "Duration from Workload admission to removal of a Pod scheduling gate.",
-		}, append([]string{"name", "cluster_queue", "is_group"}, extraLabels...),
+		}, append([]string{"name", "cluster_queue", "is_group", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	EvictedWorkloadsTotal = prometheus.NewCounterVec(
@@ -617,10 +768,13 @@ The label 'reason' can have the following values:
 - "Deactivated" means that the workload was evicted because spec.active is set to false.
 The label 'underlying_cause' can have the following values:
 - "" means that the value in 'reason' label is the root cause for eviction.
+- "WaitForStart" means that the pods have not been ready since admission, or the workload is not admitted.
+- "WaitForRecovery" means that the Pods were ready since the workload admission, but some pod has failed.
+- "WaitForScheduling" means that the workload was evicted by the PodsReady timeout while its PodsReady condition reported WaitForScheduling. This can include missing required Pods or a fallback to the regular readiness timeout.
 - "AdmissionCheck" means that the workload was evicted by Kueue due to a rejected admission check.
 - "MaximumExecutionTimeExceeded" means that the workload was evicted by Kueue due to maximum execution time exceeded.
 - "RequeuingLimitExceeded" means that the workload was evicted by Kueue due to requeuing limit exceeded.`,
-		}, append([]string{"cluster_queue", "reason", "underlying_cause", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "reason", "underlying_cause", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	ReplacedWorkloadSlicesTotal = prometheus.NewCounterVec(
@@ -628,7 +782,7 @@ The label 'underlying_cause' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "replaced_workload_slices_total",
 			Help:      `The number of replaced workload slices per 'cluster_queue'`,
-		}, append([]string{"cluster_queue", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	LocalQueueEvictedWorkloadsTotal = prometheus.NewCounterVec(
@@ -646,10 +800,13 @@ The label 'reason' can have the following values:
 - "Deactivated" means that the workload was evicted because spec.active is set to false.
 The label 'underlying_cause' can have the following values:
 - "" means that the value in 'reason' label is the root cause for eviction.
+- "WaitForStart" means that the pods have not been ready since admission, or the workload is not admitted.
+- "WaitForRecovery" means that the Pods were ready since the workload admission, but some pod has failed.
+- "WaitForScheduling" means that the workload was evicted by the PodsReady timeout while its PodsReady condition reported WaitForScheduling. This can include missing required Pods or a fallback to the regular readiness timeout.
 - "AdmissionCheck" means that the workload was evicted by Kueue due to a rejected admission check.
 - "MaximumExecutionTimeExceeded" means that the workload was evicted by Kueue due to maximum execution time exceeded.
 - "RequeuingLimitExceeded" means that the workload was evicted by Kueue due to requeuing limit exceeded.`,
-		}, append([]string{"name", "namespace", "reason", "underlying_cause", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "reason", "underlying_cause", "priority_class", "replica_role"}, localQueueMetricsLabels...),
 	)
 
 	EvictedWorkloadsOnceTotal = prometheus.NewCounterVec(
@@ -669,10 +826,11 @@ The label 'underlying_cause' can have the following values:
 - "" means that the value in 'reason' label is the root cause for eviction.
 - "WaitForStart" means that the pods have not been ready since admission, or the workload is not admitted.
 - "WaitForRecovery" means that the Pods were ready since the workload admission, but some pod has failed.
+- "WaitForScheduling" means that the workload was evicted by the PodsReady timeout while its PodsReady condition reported WaitForScheduling. This can include missing required Pods or a fallback to the regular readiness timeout.
 - "AdmissionCheck" means that the workload was evicted by Kueue due to a rejected admission check.
 - "MaximumExecutionTimeExceeded" means that the workload was evicted by Kueue due to maximum execution time exceeded.
 - "RequeuingLimitExceeded" means that the workload was evicted by Kueue due to requeuing limit exceeded.`,
-		}, append([]string{"cluster_queue", "reason", "underlying_cause", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "reason", "underlying_cause", "priority_class", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	PreemptedWorkloadsTotal = prometheus.NewCounterVec(
@@ -685,7 +843,7 @@ The label 'reason' can have the following values:
 - "InCohortReclamation" means that the workload was preempted by a workload in the same cohort due to reclamation of nominal quota.
 - "InCohortFairSharing" means that the workload was preempted by a workload in the same cohort Fair Sharing.
 - "InCohortReclaimWhileBorrowing" means that the workload was preempted by a workload in the same cohort due to reclamation of nominal quota while borrowing.`,
-		}, append([]string{"preempting_cluster_queue", "reason", "replica_role"}, extraLabels...),
+		}, append([]string{"preempting_cluster_queue", "reason", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	WorkloadEvictionLatencySeconds = prometheus.NewHistogramVec(
@@ -705,7 +863,7 @@ The label 'reason' can have the following values:
 - "NodeFailures" means that the workload was evicted due to node failures when using TopologyAwareScheduling.
 - "Deactivated" means that the workload was evicted because spec.active is set to false.`,
 			Buckets: generateExponentialBuckets(14),
-		}, append([]string{"cluster_queue", "reason", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "reason", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 
 	ReservingActiveWorkloads = prometheus.NewGaugeVec(
@@ -713,7 +871,7 @@ The label 'reason' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "reserving_active_workloads",
 			Help:      "The number of Workloads that are reserving quota, per 'cluster_queue'",
-		}, append([]string{"cluster_queue", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ReservingActiveWorkloads, gaugeCleanupScopeClusterQueueCache)
 
@@ -722,7 +880,7 @@ The label 'reason' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "local_queue_reserving_active_workloads",
 			Help:      "The number of Workloads that are reserving quota, per 'localQueue'",
-		}, append([]string{"name", "namespace", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "replica_role"}, localQueueMetricsLabels...),
 	)
 	trackGaugeVec(LocalQueueReservingActiveWorkloads, gaugeCleanupScopeLocalQueueCache)
 
@@ -731,7 +889,7 @@ The label 'reason' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "admitted_active_workloads",
 			Help:      "The number of admitted Workloads that are active, per 'cluster_queue'",
-		}, append([]string{"cluster_queue", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "replica_role"}, cl.LabelNames(configapi.SourceKindClusterQueue, configapi.SourceKindWorkload)...),
 	)
 	trackGaugeVec(AdmittedActiveWorkloads, gaugeCleanupScopeClusterQueueCache)
 
@@ -740,7 +898,7 @@ The label 'reason' can have the following values:
 			Subsystem: constants.KueueName,
 			Name:      "local_queue_admitted_active_workloads",
 			Help:      "The number of admitted Workloads that are active, per 'localQueue'",
-		}, append([]string{"name", "namespace", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "replica_role"}, cl.LabelNames(configapi.SourceKindLocalQueue, configapi.SourceKindWorkload)...),
 	)
 	trackGaugeVec(LocalQueueAdmittedActiveWorkloads, gaugeCleanupScopeLocalQueueCache)
 
@@ -750,7 +908,7 @@ The label 'reason' can have the following values:
 			Name:      "cluster_queue_status",
 			Help: `Reports 'cluster_queue' with its 'status' (with possible values 'pending', 'active' or 'terminated').
 For a ClusterQueue, the metric only reports a value of 1 for one of the statuses.`,
-		}, append([]string{"cluster_queue", "status", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "status", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ClusterQueueByStatus, gaugeCleanupScopeClusterQueueCache)
 
@@ -760,16 +918,34 @@ For a ClusterQueue, the metric only reports a value of 1 for one of the statuses
 			Name:      "local_queue_status",
 			Help: `Reports 'localQueue' with its 'active' status (with possible values 'True', 'False', or 'Unknown').
 For a LocalQueue, the metric only reports a value of 1 for one of the statuses.`,
-		}, append([]string{"name", "namespace", "active", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "active", "replica_role"}, localQueueMetricsLabels...),
 	)
 	trackGaugeVec(LocalQueueByStatus, gaugeCleanupScopeLocalQueueCache)
+
+	UnadmittedWorkloads = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Subsystem: constants.KueueName,
+			Name:      "unadmitted_workloads",
+			Help:      "The number of unadmitted workloads, per 'cluster_queue', 'reason', and 'underlying_cause'. This metric is only emitted when UnadmittedWorkloadsObservability feature gate is enabled.",
+		}, append([]string{"cluster_queue", "reason", "underlying_cause", "replica_role"}, clusterQueueMetricsLabels...),
+	)
+	trackGaugeVec(UnadmittedWorkloads, gaugeCleanupScopeClusterQueue, gaugeCleanupScopeClusterQueueCache, gaugeCleanupScopeClusterQueueLabelChange)
+
+	LocalQueueUnadmittedWorkloads = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Subsystem: constants.KueueName,
+			Name:      "local_queue_unadmitted_workloads",
+			Help:      "The number of unadmitted workloads, per 'name', 'namespace', 'cluster_queue', 'reason', and 'underlying_cause'. This metric is only emitted when UnadmittedWorkloadsObservability feature gate is enabled.",
+		}, append([]string{"name", "namespace", "cluster_queue", "reason", "underlying_cause", "replica_role"}, localQueueMetricsLabels...),
+	)
+	trackGaugeVec(LocalQueueUnadmittedWorkloads, gaugeCleanupScopeLocalQueue, gaugeCleanupScopeLocalQueueCache)
 
 	ClusterQueueResourceReservations = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Subsystem: constants.KueueName,
 			Name:      "cluster_queue_resource_reservation",
 			Help:      `Reports the cluster_queue's total resource reservation within all the flavors`,
-		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ClusterQueueResourceReservations, gaugeCleanupScopeClusterQueueResource)
 
@@ -778,7 +954,7 @@ For a LocalQueue, the metric only reports a value of 1 for one of the statuses.`
 			Subsystem: constants.KueueName,
 			Name:      "cluster_queue_resource_pending",
 			Help:      `Reports the cluster_queue's total pending resource requests. Unlike resource_reservation, pending workloads have not yet been assigned to flavors.`,
-		}, append([]string{"cluster_queue", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "resource", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ClusterQueueResourcePending, gaugeCleanupScopeClusterQueue, gaugeCleanupScopeClusterQueueResource)
 
@@ -787,7 +963,7 @@ For a LocalQueue, the metric only reports a value of 1 for one of the statuses.`
 			Subsystem: constants.KueueName,
 			Name:      "cluster_queue_resource_usage",
 			Help:      `Reports the cluster_queue's total resource usage within all the flavors`,
-		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ClusterQueueResourceUsage, gaugeCleanupScopeClusterQueueResource)
 
@@ -796,7 +972,7 @@ For a LocalQueue, the metric only reports a value of 1 for one of the statuses.`
 			Subsystem: constants.KueueName,
 			Name:      "local_queue_resource_reservation",
 			Help:      `Reports the localQueue's total resource reservation within all the flavors`,
-		}, append([]string{"name", "namespace", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "flavor", "resource", "replica_role"}, localQueueMetricsLabels...),
 	)
 	trackGaugeVec(LocalQueueResourceReservations, gaugeCleanupScopeLocalQueueResource)
 
@@ -805,7 +981,7 @@ For a LocalQueue, the metric only reports a value of 1 for one of the statuses.`
 			Subsystem: constants.KueueName,
 			Name:      "local_queue_resource_usage",
 			Help:      `Reports the localQueue's total resource usage within all the flavors`,
-		}, append([]string{"name", "namespace", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "flavor", "resource", "replica_role"}, localQueueMetricsLabels...),
 	)
 	trackGaugeVec(LocalQueueResourceUsage, gaugeCleanupScopeLocalQueueResource)
 
@@ -816,7 +992,7 @@ For a LocalQueue, the metric only reports a value of 1 for one of the statuses.`
 			Help: `Reports a value representing the LocalQueue's Admission Fair Sharing usage,
 calculated from the resource-weighted sum of consumed resources and pending
 admission penalties, divided by the LocalQueue's fair sharing weight`,
-		}, append([]string{"name", "namespace", "cluster_queue", "replica_role"}, extraLabels...),
+		}, append([]string{"name", "namespace", "cluster_queue", "replica_role"}, localQueueMetricsLabels...),
 	)
 	trackGaugeVec(LocalQueueAdmissionFairSharingUsage, gaugeCleanupScopeLocalQueue)
 
@@ -825,7 +1001,7 @@ admission penalties, divided by the LocalQueue's fair sharing weight`,
 			Subsystem: constants.KueueName,
 			Name:      "cluster_queue_nominal_quota",
 			Help:      `Reports the cluster_queue's resource nominal quota within all the flavors`,
-		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ClusterQueueResourceNominalQuota, gaugeCleanupScopeClusterQueueResource)
 
@@ -834,7 +1010,7 @@ admission penalties, divided by the LocalQueue's fair sharing weight`,
 			Subsystem: constants.KueueName,
 			Name:      "cluster_queue_borrowing_limit",
 			Help:      `Reports the cluster_queue's resource borrowing limit within all the flavors. If borrowingLimit is unset, this metric reports +Inf.`,
-		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ClusterQueueResourceBorrowingLimit, gaugeCleanupScopeClusterQueueResource)
 
@@ -843,7 +1019,7 @@ admission penalties, divided by the LocalQueue's fair sharing weight`,
 			Subsystem: constants.KueueName,
 			Name:      "cluster_queue_lending_limit",
 			Help:      `Reports the cluster_queue's resource lending limit within all the flavors. If lendingLimit is unset, this metric reports +Inf.`,
-		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "cluster_queue", "flavor", "resource", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ClusterQueueResourceLendingLimit, gaugeCleanupScopeClusterQueueResource)
 
@@ -856,7 +1032,7 @@ quota to the lendable resources in the cohort, among all the resources provided 
 the ClusterQueue, and divided by the weight.
 If zero, it means that the usage of the ClusterQueue is below the nominal quota.
 If the ClusterQueue has a weight of zero and is borrowing, this will return NaN.`,
-		}, append([]string{"cluster_queue", "cohort", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "cohort", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(ClusterQueueWeightedShare, gaugeCleanupScopeClusterQueueLabelChange)
 
@@ -869,7 +1045,7 @@ quota to the lendable resources in the Cohort, among all the resources provided 
 the Cohort, and divided by the weight.
 If zero, it means that the usage of the Cohort is below the nominal quota.
 If the Cohort has a weight of zero and is borrowing, this will return NaN.`,
-		}, append([]string{"cohort", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "replica_role"}, cohortMetricLabels...),
 	)
 	trackGaugeVec(CohortWeightedShare, gaugeCleanupScopeCohort)
 
@@ -878,7 +1054,7 @@ If the Cohort has a weight of zero and is borrowing, this will return NaN.`,
 			Subsystem: constants.KueueName,
 			Name:      "cohort_subtree_quota",
 			Help:      `Reports the cohort's nominal quota aggregated within the cohort's subtree. The values are reported per resource and flavor`,
-		}, append([]string{"cohort", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "flavor", "resource", "replica_role"}, cohortMetricLabels...),
 	)
 	trackGaugeVec(CohortSubtreeQuota, gaugeCleanupScopeCohort)
 
@@ -887,7 +1063,7 @@ If the Cohort has a weight of zero and is borrowing, this will return NaN.`,
 			Subsystem: constants.KueueName,
 			Name:      "cohort_subtree_admitted_workloads_total",
 			Help:      "The total number of admitted workloads per cohort's subtree",
-		}, append([]string{"cohort", "priority_class", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "priority_class", "replica_role"}, cohortMetricLabels...),
 	)
 
 	CohortSubtreeResourceReservations = prometheus.NewGaugeVec(
@@ -895,16 +1071,17 @@ If the Cohort has a weight of zero and is borrowing, this will return NaN.`,
 			Subsystem: constants.KueueName,
 			Name:      "cohort_subtree_resource_reservations",
 			Help:      `Reports the cohort's resource reservations aggregated within the cohort's subtree. The values are reported per resource and flavor`,
-		}, append([]string{"cohort", "flavor", "resource", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "flavor", "resource", "replica_role"}, cohortMetricLabels...),
 	)
 	trackGaugeVec(CohortSubtreeResourceReservations, gaugeCleanupScopeCohort)
 
+	// The metric sources it's labels from the ClusterQueue object.
 	CohortSubtreeAdmittedActiveWorkloads = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Subsystem: constants.KueueName,
 			Name:      "cohort_subtree_admitted_active_workloads",
 			Help:      "The number of admitted Workloads that are active, per cohort's subtree",
-		}, append([]string{"cohort", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "replica_role"}, clusterQueueMetricsLabels...),
 	)
 	trackGaugeVec(CohortSubtreeAdmittedActiveWorkloads)
 
@@ -913,7 +1090,7 @@ If the Cohort has a weight of zero and is borrowing, this will return NaN.`,
 			Subsystem: constants.KueueName,
 			Name:      "cohort_info",
 			Help:      `Reports Cohort hierarchy information. The metric has value 1 and can be joined using labels.`,
-		}, append([]string{"cohort", "parent_cohort", "root_cohort", "replica_role"}, extraLabels...),
+		}, append([]string{"cohort", "parent_cohort", "root_cohort", "dynamic_quota_orchestrator", "replica_role"}, cohortMetricLabels...),
 	))
 
 	ClusterQueueInfo = trackGaugeVec(prometheus.NewGaugeVec(
@@ -921,7 +1098,7 @@ If the Cohort has a weight of zero and is borrowing, this will return NaN.`,
 			Subsystem: constants.KueueName,
 			Name:      "cluster_queue_info",
 			Help:      `Reports ClusterQueue hierarchy information. The metric has value 1 and can be joined using labels.`,
-		}, append([]string{"cluster_queue", "parent_cohort", "root_cohort", "replica_role"}, extraLabels...),
+		}, append([]string{"cluster_queue", "parent_cohort", "root_cohort", "dynamic_quota_orchestrator", "replica_role"}, clusterQueueMetricsLabels...),
 	))
 }
 
@@ -943,13 +1120,53 @@ func ReportMultiKueueWorkloadDispatched(cqName kueue.ClusterQueueReference, clus
 	MultiKueueWorkloadsDispatchedTotal.WithLabelValues(string(cqName), cluster, roletracker.GetRole(tracker)).Inc()
 }
 
+func ReportMultiKueueWorkloadAdmitted(cqName kueue.ClusterQueueReference, cluster string, tracker *roletracker.RoleTracker) {
+	MultiKueueWorkloadsAdmittedTotal.WithLabelValues(string(cqName), cluster, roletracker.GetRole(tracker)).Inc()
+}
+
+// ReportMultiKueueClusterStatus reports the Active status of a worker cluster as
+// seen by the manager ClusterQueue referencing it. A cluster shared by several
+// ClusterQueues is reported once per ClusterQueue.
+func ReportMultiKueueClusterStatus(cqName kueue.ClusterQueueReference, cluster string, conditionStatus metav1.ConditionStatus, tracker *roletracker.RoleTracker) {
+	role := roletracker.GetRole(tracker)
+	for _, status := range ConditionStatusValues {
+		var v float64
+		if status == conditionStatus {
+			v = 1
+		}
+		MultiKueueClusterByStatus.WithLabelValues(string(cqName), cluster, string(status), role).Set(v)
+	}
+}
+
+// ClearMultiKueueClusterMetrics drops every series reported for a worker cluster,
+// across all ClusterQueues. Called when the cluster is removed.
+func ClearMultiKueueClusterMetrics(cluster string) {
+	clearScopedGaugeMetrics(gaugeCleanupScopeMultiKueueCluster, prometheus.Labels{"cluster": cluster})
+}
+
+// ClearMultiKueueClusterQueueMetrics drops every series reported for a manager
+// ClusterQueue, across all worker clusters. Called when the ClusterQueue is deleted,
+// stops using MultiKueue, or before re-reporting its current set of workers so that
+// clusters it no longer references do not linger.
+func ClearMultiKueueClusterQueueMetrics(cqName kueue.ClusterQueueReference) {
+	clearScopedGaugeMetrics(gaugeCleanupScopeMultiKueueCluster, prometheus.Labels{"cluster_queue": string(cqName)})
+}
+
+func ReportMultiKueueWorkloadEvicted(cqName kueue.ClusterQueueReference, cluster, reason string, tracker *roletracker.RoleTracker) {
+	MultiKueueWorkloadsEvictedTotal.WithLabelValues(string(cqName), cluster, reason, roletracker.GetRole(tracker)).Inc()
+}
+
 func RecordWorkloadCreationLatency(jobKind string, latency time.Duration, customLabelValues []string, tracker *roletracker.RoleTracker) {
 	labels := append([]string{jobKind, roletracker.GetRole(tracker)}, customLabelValues...)
 	WorkloadCreationLatency.WithLabelValues(labels...).Observe(latency.Seconds())
 }
 
-func RecordPodSchedulingGateRemovalSeconds(name string, clusterQueue kueue.ClusterQueueReference, isGroup bool, latency time.Duration) {
-	PodSchedulingGateRemovalSeconds.WithLabelValues(name, string(clusterQueue), strconv.FormatBool(isGroup)).Observe(latency.Seconds())
+func RecordPodSchedulingGateRemovalSeconds(name string, clusterQueue kueue.ClusterQueueReference, isGroup bool, latency time.Duration, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	// WorkloadAdmitted.LastTransitionTime is set by the Kueue controller manager, not obtained from the Kubernetes API server.
+	// Latency can be negative when the controller's current time is earlier than the recorded transition time (e.g. after a
+	// leader handoff or wall-clock adjustment), so clamp negative observations to zero.
+	labels := append([]string{name, string(clusterQueue), strconv.FormatBool(isGroup), roletracker.GetRole(tracker)}, customLabelValues...)
+	PodSchedulingGateRemovalSeconds.WithLabelValues(labels...).Observe(max(0, latency.Seconds()))
 }
 
 func QuotaReservedWorkload(cqName kueue.ClusterQueueReference, priorityClass string, waitTime time.Duration, customLabelValues []string, tracker *roletracker.RoleTracker) {
@@ -976,6 +1193,22 @@ func IncrementFinishedWorkloadTotal(cqName kueue.ClusterQueueReference, priority
 func IncrementLocalQueueFinishedWorkloadTotal(lq LocalQueueReference, priorityClass string, customLabelValues []string, tracker *roletracker.RoleTracker) {
 	labels := append([]string{string(lq.Name), lq.Namespace, priorityClass, roletracker.GetRole(tracker)}, customLabelValues...)
 	LocalQueueFinishedWorkloadsTotal.WithLabelValues(labels...).Inc()
+}
+
+// ReportExecutionTime records the total execution time of a finished workload
+// for the given ClusterQueue, priority class, and workload role.
+func ReportExecutionTime(cqName kueue.ClusterQueueReference, priorityClass string, duration time.Duration, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	labels := append([]string{string(cqName), priorityClass, roletracker.GetRole(tracker)}, customLabelValues...)
+	seconds := max(0, duration.Seconds())
+	ExecutionTimeSeconds.WithLabelValues(labels...).Observe(seconds)
+}
+
+// ReportLocalQueueExecutionTime records the total execution time of a finished workload
+// for the given LocalQueue, priority class, and workload role.
+func ReportLocalQueueExecutionTime(lq LocalQueueReference, priorityClass string, duration time.Duration, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	labels := append([]string{string(lq.Name), lq.Namespace, priorityClass, roletracker.GetRole(tracker)}, customLabelValues...)
+	seconds := max(0, duration.Seconds())
+	LocalQueueExecutionTimeSeconds.WithLabelValues(labels...).Observe(seconds)
 }
 
 // ReportFinishedWorkloads sets the current total number of finished workloads
@@ -1034,12 +1267,31 @@ func ReportLocalQueueAdmittedUntilReadyWaitTime(lq LocalQueueReference, priority
 	LocalQueueAdmittedUntilReadyWaitTime.WithLabelValues(labels...).Observe(waitTime.Seconds())
 }
 
-func ReportPendingWorkloads(cqName kueue.ClusterQueueReference, active, inadmissible int, customLabelValues []string, tracker *roletracker.RoleTracker) {
+func ReportPendingWorkloads(cqName kueue.ClusterQueueReference, pendingStatus string, count int, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	role := roletracker.GetRole(tracker)
+	labels := append([]string{string(cqName), pendingStatus, role}, customLabelValues...)
+	PendingWorkloads.WithLabelValues(labels...).Set(float64(count))
+}
+
+func ReportWorkloadRecoveryWaitTime(cqName kueue.ClusterQueueReference, priorityClass string, waitTime time.Duration, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	labels := append([]string{string(cqName), priorityClass, roletracker.GetRole(tracker)}, customLabelValues...)
+	WorkloadRecoveryWaitTime.WithLabelValues(labels...).Observe(max(0, waitTime.Seconds()))
+}
+
+func ReportLocalQueueWorkloadRecoveryWaitTime(lq LocalQueueReference, priorityClass string, waitTime time.Duration, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	labels := append([]string{string(lq.Name), lq.Namespace, priorityClass, roletracker.GetRole(tracker)}, customLabelValues...)
+	LocalQueueWorkloadRecoveryWaitTime.WithLabelValues(labels...).Observe(max(0, waitTime.Seconds()))
+}
+
+func ReportPendingSchedulingHashes(cqName kueue.ClusterQueueReference, active, inadmissible int, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	if !features.Enabled(features.SchedulingEquivalenceHashing) {
+		return
+	}
 	role := roletracker.GetRole(tracker)
 	activeLabels := append([]string{string(cqName), PendingStatusActive, role}, customLabelValues...)
 	inadmissibleLabels := append([]string{string(cqName), PendingStatusInadmissible, role}, customLabelValues...)
-	PendingWorkloads.WithLabelValues(activeLabels...).Set(float64(active))
-	PendingWorkloads.WithLabelValues(inadmissibleLabels...).Set(float64(inadmissible))
+	PendingSchedulingHashes.WithLabelValues(activeLabels...).Set(float64(active))
+	PendingSchedulingHashes.WithLabelValues(inadmissibleLabels...).Set(float64(inadmissible))
 }
 
 // ReportWorkloadEvictionLatency records latency from eviction (WorkloadEvicted True) until the workload returns to Pending (quota released).
@@ -1058,6 +1310,19 @@ func ReportLocalQueuePendingWorkloads(lq LocalQueueReference, active, inadmissib
 	inadmissibleLabels := append([]string{string(lq.Name), lq.Namespace, PendingStatusInadmissible, role}, customLabelValues...)
 	LocalQueuePendingWorkloads.WithLabelValues(activeLabels...).Set(float64(active))
 	LocalQueuePendingWorkloads.WithLabelValues(inadmissibleLabels...).Set(float64(inadmissible))
+}
+
+func ReportLocalQueuePendingWorkloadsByWorkload(lq LocalQueueReference, status string, count int, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	labels := append([]string{string(lq.Name), lq.Namespace, status, roletracker.GetRole(tracker)}, customLabelValues...)
+	LocalQueuePendingWorkloads.WithLabelValues(labels...).Set(float64(count))
+}
+
+// ClearLocalQueuePendingWorkloadsSeries removes all pending workload series for lq.
+func ClearLocalQueuePendingWorkloadsSeries(lq LocalQueueReference) {
+	LocalQueuePendingWorkloads.DeletePartialMatch(prometheus.Labels{
+		"name":      string(lq.Name),
+		"namespace": lq.Namespace,
+	})
 }
 
 func ReportEvictedWorkloads(cqName kueue.ClusterQueueReference, evictionReason, underlyingCause, priorityClass string, customLabelValues []string, tracker *roletracker.RoleTracker) {
@@ -1092,6 +1357,12 @@ func LQRefFromWorkload(wl *kueue.Workload) LocalQueueReference {
 	}
 }
 
+func ClearPendingWorkloads(cqName kueue.ClusterQueueReference, pendingStatus string, customLabelVals []string, tracker *roletracker.RoleTracker) {
+	role := roletracker.GetRole(tracker)
+	labels := append([]string{string(cqName), pendingStatus, role}, customLabelVals...)
+	PendingWorkloads.DeleteLabelValues(labels...)
+}
+
 func ClearClusterQueueMetrics(cq kueue.ClusterQueueReference) {
 	cqName := string(cq)
 	// Clears all cluster_queue-scoped gauges for cqName.
@@ -1099,15 +1370,18 @@ func ClearClusterQueueMetrics(cq kueue.ClusterQueueReference) {
 	QuotaReservedWorkloadsTotal.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	QuotaReservedWaitTime.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	FinishedWorkloadsTotal.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
+	ExecutionTimeSeconds.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	PodsReadyToEvictedTimeSeconds.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	AdmittedWorkloadsTotal.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	AdmissionWaitTime.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	AdmissionChecksWaitTime.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
+	WorkloadRecoveryWaitTime.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	QueuedUntilReadyWaitTime.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	AdmittedUntilReadyWaitTime.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	EvictedWorkloadsTotal.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	EvictedWorkloadsOnceTotal.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	PreemptedWorkloadsTotal.DeletePartialMatch(prometheus.Labels{"preempting_cluster_queue": cqName})
+	PreemptionTargetRecomputationsTotal.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	// Histogram vec, not cleared by gauge cleanup above.
 	WorkloadEvictionLatencySeconds.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
 	PodSchedulingGateRemovalSeconds.DeletePartialMatch(prometheus.Labels{"cluster_queue": cqName})
@@ -1125,8 +1399,10 @@ func ClearLocalQueueMetrics(lq LocalQueueReference) {
 	LocalQueueQuotaReservedWorkloadsTotal.DeletePartialMatch(lbls)
 	LocalQueueQuotaReservedWaitTime.DeletePartialMatch(lbls)
 	LocalQueueFinishedWorkloadsTotal.DeletePartialMatch(lbls)
+	LocalQueueExecutionTimeSeconds.DeletePartialMatch(lbls)
 	LocalQueueAdmittedWorkloadsTotal.DeletePartialMatch(lbls)
 	LocalQueueAdmissionWaitTime.DeletePartialMatch(lbls)
+	LocalQueueWorkloadRecoveryWaitTime.DeletePartialMatch(lbls)
 	LocalQueueAdmissionChecksWaitTime.DeletePartialMatch(lbls)
 	LocalQueueQueuedUntilReadyWaitTime.DeletePartialMatch(lbls)
 	LocalQueueAdmittedUntilReadyWaitTime.DeletePartialMatch(lbls)
@@ -1235,9 +1511,14 @@ func ClearCohortSubtreeResourceReservations(cohort kueue.CohortReference, flavor
 	CohortSubtreeResourceReservations.DeletePartialMatch(lbls)
 }
 
-func ReportCohortInfo(cohort, parentCohort, rootCohort kueue.CohortReference, customLabelValues []string, tracker *roletracker.RoleTracker) {
-	labels := make([]string, 0, 4+len(customLabelValues))
-	labels = append(labels, string(cohort), string(parentCohort), string(rootCohort), roletracker.GetRole(tracker))
+func ReportCohortInfo(
+	cohort, parentCohort, rootCohort kueue.CohortReference,
+	dynamicQuotaOrchestrator kueuealpha.DynamicQuotaOrchestratorReference,
+	customLabelValues []string,
+	tracker *roletracker.RoleTracker,
+) {
+	labels := make([]string, 0, 5+len(customLabelValues))
+	labels = append(labels, string(cohort), string(parentCohort), string(rootCohort), string(dynamicQuotaOrchestrator), roletracker.GetRole(tracker))
 	labels = append(labels, customLabelValues...)
 	CohortInfo.WithLabelValues(labels...).Set(1)
 }
@@ -1246,9 +1527,15 @@ func ClearCohortInfo(cohort kueue.CohortReference) {
 	CohortInfo.DeletePartialMatch(prometheus.Labels{"cohort": string(cohort)})
 }
 
-func ReportClusterQueueInfo(cqName kueue.ClusterQueueReference, parentCohort, rootCohort kueue.CohortReference, customLabelValues []string, tracker *roletracker.RoleTracker) {
-	labels := make([]string, 0, 4+len(customLabelValues))
-	labels = append(labels, string(cqName), string(parentCohort), string(rootCohort), roletracker.GetRole(tracker))
+func ReportClusterQueueInfo(
+	cqName kueue.ClusterQueueReference,
+	parentCohort, rootCohort kueue.CohortReference,
+	dynamicQuotaOrchestrator kueuealpha.DynamicQuotaOrchestratorReference,
+	customLabelValues []string,
+	tracker *roletracker.RoleTracker,
+) {
+	labels := make([]string, 0, 5+len(customLabelValues))
+	labels = append(labels, string(cqName), string(parentCohort), string(rootCohort), string(dynamicQuotaOrchestrator), roletracker.GetRole(tracker))
 	labels = append(labels, customLabelValues...)
 	ClusterQueueInfo.WithLabelValues(labels...).Set(1)
 }
@@ -1306,9 +1593,9 @@ func ReportCohortSubtreeAdmittedActiveWorkloads(cohort kueue.CohortReference, co
 	CohortSubtreeAdmittedActiveWorkloads.WithLabelValues(labels...).Set(float64(count))
 }
 
-func ReportAdmittedActiveWorkloads(cqName kueue.ClusterQueueReference, count int, customLabelValues []string, tracker *roletracker.RoleTracker) {
+func ReportAdmittedActiveWorkloads(cqName kueue.ClusterQueueReference, incr int, customLabelValues []string, tracker *roletracker.RoleTracker) {
 	labels := append([]string{string(cqName), roletracker.GetRole(tracker)}, customLabelValues...)
-	AdmittedActiveWorkloads.WithLabelValues(labels...).Set(float64(count))
+	AdmittedActiveWorkloads.WithLabelValues(labels...).Add(float64(incr))
 }
 
 func ReportReservingActiveWorkloads(cqName kueue.ClusterQueueReference, count int, customLabelValues []string, tracker *roletracker.RoleTracker) {
@@ -1316,9 +1603,9 @@ func ReportReservingActiveWorkloads(cqName kueue.ClusterQueueReference, count in
 	ReservingActiveWorkloads.WithLabelValues(labels...).Set(float64(count))
 }
 
-func ReportLocalQueueAdmittedActiveWorkloads(lq LocalQueueReference, count int, customLabelValues []string, tracker *roletracker.RoleTracker) {
+func ReportLocalQueueAdmittedActiveWorkloads(lq LocalQueueReference, incr int, customLabelValues []string, tracker *roletracker.RoleTracker) {
 	labels := append([]string{string(lq.Name), lq.Namespace, roletracker.GetRole(tracker)}, customLabelValues...)
-	LocalQueueAdmittedActiveWorkloads.WithLabelValues(labels...).Set(float64(count))
+	LocalQueueAdmittedActiveWorkloads.WithLabelValues(labels...).Add(float64(incr))
 }
 
 func ReportLocalQueueReservingActiveWorkloads(lq LocalQueueReference, count int, customLabelValues []string, tracker *roletracker.RoleTracker) {
@@ -1334,6 +1621,15 @@ func ReportPodsReadyToEvictedTimeSeconds(cqName kueue.ClusterQueueReference, rea
 func ReportAdmissionCyclePreemptionSkips(cqName kueue.ClusterQueueReference, count int, customLabelValues []string, tracker *roletracker.RoleTracker) {
 	labels := append([]string{string(cqName), roletracker.GetRole(tracker)}, customLabelValues...)
 	AdmissionCyclePreemptionSkips.WithLabelValues(labels...).Set(float64(count))
+}
+
+// ReportPreemptionTargetRecomputation increments the counter for a preemption
+// target recomputation result. The result must be one of
+// PreemptionTargetRecomputationResultNewTargets, PreemptionTargetRecomputationResultDeferredFit,
+// or PreemptionTargetRecomputationResultSkipped.
+func ReportPreemptionTargetRecomputation(cqName kueue.ClusterQueueReference, result PreemptionTargetRecomputationResult, customLabelValues []string, tracker *roletracker.RoleTracker) {
+	labels := append([]string{string(cqName), string(result), roletracker.GetRole(tracker)}, customLabelValues...)
+	PreemptionTargetRecomputationsTotal.WithLabelValues(labels...).Inc()
 }
 
 func clearScopedGaugeMetrics(scope gaugeCleanupScope, lbls prometheus.Labels) {
@@ -1407,8 +1703,13 @@ func Register() {
 		AdmissionAttemptsTotal,
 		admissionAttemptDuration,
 		MultiKueueWorkloadsDispatchedTotal,
+		MultiKueueWorkloadsAdmittedTotal,
+		MultiKueueWorkloadsEvictedTotal,
+		MultiKueueClusterByStatus,
 		AdmissionCyclePreemptionSkips,
+		PreemptionTargetRecomputationsTotal,
 		PendingWorkloads,
+		PendingSchedulingHashes,
 		FinishedWorkloads,
 		QuotaReservedWorkloadsTotal,
 		FinishedWorkloadsTotal,
@@ -1416,6 +1717,7 @@ func Register() {
 		PodsReadyToEvictedTimeSeconds,
 		AdmittedWorkloadsTotal,
 		AdmissionWaitTime,
+		WorkloadRecoveryWaitTime,
 		AdmissionChecksWaitTime,
 		QueuedUntilReadyWaitTime,
 		AdmittedUntilReadyWaitTime,
@@ -1441,6 +1743,8 @@ func Register() {
 		CohortSubtreeResourceReservations,
 		CohortSubtreeAdmittedActiveWorkloads,
 		PodSchedulingGateRemovalSeconds,
+		UnadmittedWorkloads,
+		ExecutionTimeSeconds,
 	)
 	if features.Enabled(features.MetricForWorkloadCreationLatency) {
 		metrics.Registry.MustRegister(WorkloadCreationLatency)
@@ -1463,11 +1767,100 @@ func RegisterLQMetrics() {
 		LocalQueueQueuedUntilReadyWaitTime,
 		LocalQueueAdmittedUntilReadyWaitTime,
 		LocalQueueEvictedWorkloadsTotal,
+		LocalQueueWorkloadRecoveryWaitTime,
 		LocalQueueReservingActiveWorkloads,
 		LocalQueueAdmittedActiveWorkloads,
 		LocalQueueByStatus,
 		LocalQueueResourceReservations,
 		LocalQueueResourceUsage,
 		LocalQueueAdmissionFairSharingUsage,
+		LocalQueueUnadmittedWorkloads,
+		LocalQueueExecutionTimeSeconds,
 	)
+}
+
+func ReportUnadmittedWorkload(
+	cqName kueue.ClusterQueueReference,
+	reason, underlyingCause string,
+	customLabelValues []string,
+	tracker *roletracker.RoleTracker,
+	count int,
+) {
+	labels := append(
+		[]string{string(cqName), reason, underlyingCause, roletracker.GetRole(tracker)},
+		customLabelValues...,
+	)
+	UnadmittedWorkloads.WithLabelValues(labels...).Set(float64(count))
+}
+
+func ClearUnadmittedWorkloadLabelValues(
+	cqName kueue.ClusterQueueReference,
+	reason, underlyingCause string,
+	customLabelValues []string,
+	tracker *roletracker.RoleTracker,
+) {
+	labels := append(
+		[]string{string(cqName), reason, underlyingCause, roletracker.GetRole(tracker)},
+		customLabelValues...,
+	)
+	UnadmittedWorkloads.DeleteLabelValues(labels...)
+}
+
+func ReportLocalQueueUnadmittedWorkload(
+	lq LocalQueueReference,
+	cqName kueue.ClusterQueueReference,
+	reason, underlyingCause string,
+	customLabelValues []string,
+	tracker *roletracker.RoleTracker,
+	count int,
+) {
+	labels := append(
+		[]string{
+			string(lq.Name),
+			lq.Namespace,
+			string(cqName),
+			reason,
+			underlyingCause,
+			roletracker.GetRole(tracker),
+		},
+		customLabelValues...,
+	)
+	LocalQueueUnadmittedWorkloads.WithLabelValues(labels...).Set(float64(count))
+}
+
+func ClearLocalQueueUnadmittedWorkloadLabelValues(
+	lq LocalQueueReference,
+	cqName kueue.ClusterQueueReference,
+	reason, underlyingCause string,
+	customLabelValues []string,
+	tracker *roletracker.RoleTracker,
+) {
+	labels := append(
+		[]string{
+			string(lq.Name),
+			lq.Namespace,
+			string(cqName),
+			reason,
+			underlyingCause,
+			roletracker.GetRole(tracker),
+		},
+		customLabelValues...,
+	)
+	LocalQueueUnadmittedWorkloads.DeleteLabelValues(labels...)
+}
+
+func TrackWorkload(cl *CustomLabels, tracker *LabelValsTracker, w *kueue.Workload) {
+	if cl.KindConfigured(configapi.SourceKindWorkload) {
+		tracker.Incr(cl.MakeValsSet(configapi.SourceKindWorkload, w.Labels, w.Annotations))
+	} else {
+		tracker.Incr(EmptyValsSet())
+	}
+}
+
+func UntrackWorkload(cl *CustomLabels, tracker *LabelValsTracker, w *kueue.Workload) {
+	if cl.KindConfigured(configapi.SourceKindWorkload) {
+		tracker.Decr(cl.MakeValsSet(configapi.SourceKindWorkload, w.Labels, w.Annotations))
+	} else {
+		tracker.Decr(EmptyValsSet())
+	}
 }

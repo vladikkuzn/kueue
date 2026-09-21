@@ -122,7 +122,7 @@ make test-multikueue-e2e-sequential
 
 You can specify the Kubernetes version:
 ```shell
-E2E_K8S_FULL_VERSION=1.35.0 make test-e2e-baseline
+E2E_K8S_FULL_VERSION=1.37.0 make test-e2e-baseline
 ```
 
 For running a subset of tests, see [Running subset of tests](#running-subset-of-integration-or-e2e-tests).
@@ -191,6 +191,45 @@ E2E_MODE=dev IMAGE_TAG=us-central1-docker.pkg.dev/k8s-staging-images/kueue/kueue
 2. Run the command above with the same image tag, e.g. `E2E_MODE=dev IMAGE_TAG=registry.k8s.io/kueue/kueue:v0.16.0 make test-e2e-baseline`.
 
 This is useful to reproduce issues on a specific released version (e.g. for on-call debugging). For installing a released version into a real cluster (not e2e), see [Install a released version](/docs/getting-started/installation/#install-a-released-version).
+
+### Invoking `e2e-test.sh` directly (without `make`)
+
+`e2e-test.sh` is normally invoked via `make`, which sets `ARTIFACTS`, `IMAGE_TAG`, `E2E_USE_HELM`, and `GINKGO_ARGS` for you. If you (or a tool/agent) invoke it directly, those variables must be set explicitly, since the script has `set -o nounset` and does not default them outside `make`:
+
+```shell
+ARTIFACTS="$(pwd)/artifacts/my-test" \
+IMAGE_TAG=local/kueue:my-test \
+E2E_USE_HELM=false \
+GINKGO_ARGS="" \
+  ./hack/testing/e2e-test.sh
+```
+
+Other variables of note when scripting a direct invocation:
+
+| Variable | Purpose |
+|----------|---------|
+| `E2E_KIND_VERSION` | Kind node image to use, e.g. `kindest/node:v1.37.0` or a locally built image name |
+| `E2E_MODE` | Set to `dev` to reuse an existing cluster on re-runs and keep the cluster on exit |
+| `E2E_RUN_ONLY_ENV` | Set to `true` to stand up the cluster and deploy Kueue, then exit before running tests |
+| `KIND_CLUSTER_NAME` | Name of the kind cluster to create/reuse |
+| `KIND_CLUSTER_FILE` | Base kind config file to use, relative to `hack/testing/` |
+| `E2E_TARGET_FOLDER` | Go test package under `test/e2e/` to target |
+
+Without a tty, the "Do you want to cleanup?" prompt reads EOF. `E2E_MODE=dev` still keeps the cluster regardless, since `e2e_should_delete_cluster` returns false in dev mode regardless of the prompt answer. Interactively, answer `n` to keep the cluster.
+
+#### Re-deploy Kueue after code changes (dev mode)
+
+Once a dev-mode cluster is up, you don't need to re-run the full setup to pick up controller code changes:
+
+```shell
+# Rebuild, reload, restart
+make -e IMAGE_TAG=local/kueue:my-test image-build IMAGE_BUILD_EXTRA_OPTS="--load" PLATFORMS="linux/amd64"
+kind load docker-image local/kueue:my-test --name <cluster-name>
+kubectl -n kueue-system rollout restart deploy/kueue-controller-manager
+kubectl -n kueue-system rollout status deploy/kueue-controller-manager --timeout=120s
+```
+
+Or re-run the setup command — `E2E_MODE=dev` makes it idempotent.
 
 ## Running subset of integration or e2e tests
 
@@ -317,7 +356,7 @@ Kueue runs as a regular pod on a worker node, and in e2e tests there are 2 repli
 
 For each log message you can from which file and line the message is coming from:
 ```log
-2025-02-03T15:51:51.502425029Z stderr F 2025-02-03T15:51:51.502117824Z	LEVEL(-2)	cluster-queue-reconciler	core/clusterqueue_controller.go:341	ClusterQueue update event	{"clusterQueue": {"name":"cluster-queue"}}
+2025-02-03T15:51:51.502425029Z stderr F 2025-02-03T15:51:51.502117824Z	LEVEL(-2)	clusterqueue-reconciler	core/clusterqueue_controller.go:341	ClusterQueue update event	{"clusterQueue": {"name":"cluster-queue"}}
 ```
 
 ---
@@ -353,7 +392,7 @@ func TestValidateClusterQueue(t *testing.T) {
 You can click on the `debug test` to debug a specific test.
 
 For integration tests, an additional step is needed.  In settings.json, you need to add two variables inside `go.testEnvVars`:
-- Run `ENVTEST_K8S_VERSION=1.35 make envtest && ./bin/setup-envtest use $ENVTEST_K8S_VERSION -p path` and assign the path to the `KUBEBUILDER_ASSETS` variable
+- Run `export ENVTEST_K8S_VERSION=1.37 && make envtest && ./bin/setup-envtest use $ENVTEST_K8S_VERSION -p path` and assign the path to the `KUBEBUILDER_ASSETS` variable
 - Set `KUEUE_BIN` to the `bin` directory within your cloned Kueue repository
 ```json
 "go.testEnvVars": {
