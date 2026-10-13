@@ -1,0 +1,23 @@
+test/compatibility_lifecycle/reference/versioned_feature_list.yaml
+  s_0aefdaa8447368::t_e661f09b4988fc 402,404-405
+site/data/featuregates/versioned_feature_list.yaml
+  s_0aefdaa8447368::t_dbf64aa0307c8c 402,404-405
+pkg/features/kube_features.go
+  s_0aefdaa8447368::t_322287b098b028 1195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "211c613f3f9e4192deb35444126cc4d9aae61cfe",
+  "prompts": {},
+  "sessions": {
+    "s_0aefdaa8447368": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e37d2210-6366-44a0-8630-49467ac19df0",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
