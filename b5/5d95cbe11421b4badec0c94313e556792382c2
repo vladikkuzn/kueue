@@ -1,0 +1,19 @@
+pkg/controller/jobs/pod/pod_controller.go
+  s_0aefdaa8447368::t_bc02467c44e8cf 947-955
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b55d95cbe11421b4badec0c94313e556792382c2",
+  "prompts": {},
+  "sessions": {
+    "s_0aefdaa8447368": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e37d2210-6366-44a0-8630-49467ac19df0",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
