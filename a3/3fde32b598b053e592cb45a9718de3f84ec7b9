@@ -1,0 +1,20 @@
+hack/make/verify.mk
+  s_7f79f24766fd63::t_e126cbdb89aede 113
+  s_7f79f24766fd63::t_9953cc690db6f7 296-299
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a33fde32b598b053e592cb45a9718de3f84ec7b9",
+  "prompts": {},
+  "sessions": {
+    "s_7f79f24766fd63": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f1182f56-4244-42f7-8c5e-4a0c7db5d773",
+        "model": "composer-2.5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
