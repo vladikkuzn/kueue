@@ -1,0 +1,51 @@
+test/e2e/singlecluster/extended/kuberay_test.go
+  s_fb520a22390aff::t_7d3b335d3cd759 45,700-745,751-802
+  s_fb520a22390aff::t_3c41d03e3af973 746-750
+  s_fb520a22390aff::t_6901b4390feaac 803-804
+pkg/controller/jobs/raycluster/common.go
+  s_fb520a22390aff::t_08636abd2958da 174-186,188-189
+  s_fb520a22390aff::t_51899810521afd 187
+pkg/controller/jobs/raycluster/raycluster_controller_test.go
+  s_fb520a22390aff::t_7d3b335d3cd759 435-439
+  s_fb520a22390aff::t_d79db4716c17e3 463-519
+  s_fb520a22390aff::t_08636abd2958da 400-434,440-462
+pkg/controller/jobs/raycluster/raycluster_webhook.go
+  s_fb520a22390aff::t_7d3b335d3cd759 21,23,27,39,51-53,158,211-241,244,247-250,288-294
+  s_fb520a22390aff::t_211901e3d9293a 242-243
+  s_fb520a22390aff::t_d4f3ea3c5eea7f 31,245-246
+pkg/controller/jobs/raycluster/raycluster_webhook_test.go
+  s_fb520a22390aff::t_211901e3d9293a 228-229
+  s_fb520a22390aff::t_6ce5c9868ce7ef 212-227,230-235,247-270,274-282,290-298,302-322,774-787,791-805
+  s_fb520a22390aff::t_3ea55a73719e7a 36
+  s_fb520a22390aff::t_c0faabdd60882b 236-246,271-273,283-289,299-301,788-790
+test/integration/singlecluster/controller/jobs/raycluster/raycluster_controller_partial_preemption_test.go
+  s_fb520a22390aff::t_4187872f638a72 1-130
+test/e2e/config/extended/controller_manager_config.yaml
+  s_fb520a22390aff::t_7d3b335d3cd759 53
+pkg/controller/jobframework/interface.go
+  s_fb520a22390aff::t_259ffd05dcaf04 93-100
+site/content/en/docs/tasks/run/rayclusters.md
+  s_fb520a22390aff::t_80ec0f6779aa2f 89-122,124
+  s_fb520a22390aff::t_9e6c77069a9e65 123
+pkg/controller/jobs/raycluster/raycluster_controller.go
+  s_fb520a22390aff::t_08636abd2958da 122
+  s_fb520a22390aff::t_c17d6d6cab7dd8 38,84,134-154
+pkg/controller/jobframework/reconciler.go
+  s_fb520a22390aff::t_259ffd05dcaf04 736-746
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cd5e0f5bf1eb11837904cc8a2e99d2b0ab96350",
+  "prompts": {},
+  "sessions": {
+    "s_fb520a22390aff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "664d87e1-6219-43d8-9eb1-0d214b3d7dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
