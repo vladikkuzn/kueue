@@ -1,0 +1,99 @@
+apis/kueue/v1beta2/workload_types.go
+  s_fb520a22390aff::t_cfc6a559825946 442-451
+pkg/cache/scheduler/snapshot.go
+  s_fb520a22390aff::t_4653a39890f8e3 217-243
+pkg/cache/scheduler/snapshot_test.go
+  s_fb520a22390aff::t_56fb0d1fda6d06 1958-2010
+pkg/constants/constants.go
+  s_fb520a22390aff::t_1411be090c58de 98-108
+pkg/controller/core/workload_controller.go
+  s_fb520a22390aff::t_4223e62bd90987 36,846-849,1497-1499,1576-1618
+pkg/controller/core/workload_controller_test.go
+  s_fb520a22390aff::t_78ce2f858864b4 46,3616-3727
+pkg/controller/jobframework/reconciler.go
+  s_fb520a22390aff::t_e4fc63eee69379 2135-2143
+pkg/controller/jobframework/reconciler_test.go
+  s_fb520a22390aff::t_b55261824de630 234-250
+pkg/controller/jobs/job/job_webhook.go
+  s_fb520a22390aff::t_5c237c6b789c41 37,169-171
+pkg/controller/jobs/job/job_webhook_test.go
+  s_fb520a22390aff::t_3da26896e62773 630-644
+pkg/features/kube_features.go
+  s_fb520a22390aff::t_d959126c0dcdaf 895-901,1139-1141
+pkg/scheduler/assignment/native/native.go
+  s_fb520a22390aff::t_e081f771a22202 94-95,97-101,103
+pkg/scheduler/preemption/classical/cache_candidate_generator.go
+  s_fb520a22390aff::t_584b077f68b930 28,46-50,191-205,207,235-237,258-259,263,289
+pkg/scheduler/preemption/classical/candidate_generator.go
+  s_fb520a22390aff::t_df6c148ed72442 48-49,143,153-154,156-179,186-187,193,211-220
+pkg/scheduler/preemption/fair_strategy.go
+  s_fb520a22390aff::t_89ca386b40bacc 212-217,219,270-271,274,280-281,284,312-313,317,355-356,359-361,369-381
+pkg/scheduler/preemption/fairsharing/target.go
+  s_fb520a22390aff::t_cfb18947da29bf 42-51
+pkg/scheduler/preemption/policy/ordering.go
+  s_fb520a22390aff::t_6ccdb72d616d61 38-39,41-46,55-60,84-102,116-145
+pkg/scheduler/preemption/policy/ordering_test.go
+  s_fb520a22390aff::t_f5b26aec6c86ed 1-164
+pkg/scheduler/preemption/policy/types.go
+  s_fb520a22390aff::t_b8452af03e094c 40-69
+pkg/scheduler/preemption/preempted_workloads.go
+  s_fb520a22390aff::t_6c0beceaedbede 25,38,55-67
+pkg/scheduler/preemption/preempted_workloads_test.go
+  s_fb520a22390aff::t_e73dd65a527bff 33,44,46,49,52
+pkg/scheduler/preemption/preemption.go
+  s_fb520a22390aff::t_5281dc214d7198 25,60,164-166,294-323,422-425,455-633,636,643,649
+pkg/scheduler/preemption/preemption_fair_test.go
+  s_fb520a22390aff::t_595610d60b7534 38,1734-1865
+pkg/scheduler/preemption/preemption_oracle.go
+  s_fb520a22390aff::t_9c98e46394d515 72-75,77
+pkg/scheduler/preemption/preemption_test.go
+  s_fb520a22390aff::t_496f14e3c92b06 23,34,37,45,5232-5728
+pkg/scheduler/scheduler.go
+  s_fb520a22390aff::t_e4e1a3cbe5de64 945-946,950-971,1028-1030
+pkg/scheduler/scheduler_test.go
+  s_fb520a22390aff::t_4481e0f7f76336 11838
+pkg/webhooks/workload_webhook.go
+  s_fb520a22390aff::t_9967549518ae19 135-136,139,145,411,423-426,440-462
+pkg/webhooks/workload_webhook_test.go
+  s_fb520a22390aff::t_cc1a68ef9a8886 32,773-784,1783-1923
+pkg/workload/partial_preemption.go
+  s_fb520a22390aff::t_a7071095512e99 1-148
+pkg/workload/partial_preemption_test.go
+  s_fb520a22390aff::t_bb5c80cfa415b6 1-69
+pkg/workload/workload.go
+  s_fb520a22390aff::t_0953a8155143f4 1794-1798,1810-1811
+pkg/workloadslicing/workloadslicing_test.go
+  s_fb520a22390aff::t_28ee31467dfa14 2193
+test/integration/singlecluster/scheduler/scheduler_test.go
+  s_fb520a22390aff::t_92df601ede231e 5019-5109
+apis/kueue/v1beta2/zz_generated.deepcopy.go
+  s_fb520a22390aff::t_aeceaec9caa717 1267-1271
+charts/kueue/templates/crd/kueue.x-k8s.io_workloads.yaml
+  s_fb520a22390aff::t_aa19fadce968c0 8858-8867
+client-go/applyconfiguration/kueue/v1beta2/podsetassignment.go
+  s_fb520a22390aff::t_ce1e9bcdf3d054 166-172,234-241
+config/components/crd/bases/kueue.x-k8s.io_workloads.yaml
+  s_fb520a22390aff::t_023895cb5adf26 9334-9343
+site/content/en/docs/reference/kueue.v1beta2.md
+  s_fb520a22390aff::t_a73ce972701de4 2467-2477
+site/data/featuregates/versioned_feature_list.yaml
+  s_fb520a22390aff::t_ea9744f16f08ad 422-427
+test/compatibility_lifecycle/reference/versioned_feature_list.yaml
+  s_fb520a22390aff::t_8afb115b71a5a7 422-427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d3d6354ee90989793c49c458868df51047cc17d",
+  "prompts": {},
+  "sessions": {
+    "s_fb520a22390aff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "664d87e1-6219-43d8-9eb1-0d214b3d7dfb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
