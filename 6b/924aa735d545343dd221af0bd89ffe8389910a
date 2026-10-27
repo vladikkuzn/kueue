@@ -1,0 +1,39 @@
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_17d02baad7b52a::t_2e4a2c847d5242 1937-2001
+  s_17d02baad7b52a::t_c1d386b0673078 2002-2021
+  s_986445d2ef76dc::t_47bf22db7b47a1 43,49,1891
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_17d02baad7b52a::t_88acf6104f0ca5 39,78-80,93-96,142-157
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_17d02baad7b52a::t_ce352a24d7ef62 484,510-532,541
+  s_986445d2ef76dc::t_8cd3d3d61311a1 533-540,542-543
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_17d02baad7b52a::t_db92ab058e55f1 129-197,208-209,216
+  s_986445d2ef76dc::t_51139dde58667b 198-207,210-215,217-237
+pkg/util/testingjobs/statefulset/wrappers.go
+  s_986445d2ef76dc::t_fd469c788c3737 261-272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b924aa735d545343dd221af0bd89ffe8389910a",
+  "prompts": {},
+  "sessions": {
+    "s_17d02baad7b52a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "949f9b4b-a4b3-4718-811d-57e9167b7e76",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
