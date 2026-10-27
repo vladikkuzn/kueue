@@ -1,0 +1,26 @@
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_986445d2ef76dc::t_16c43b7d24cbef 39,80,93-96,142-157
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_ephemeral_containers_test.go
+  s_986445d2ef76dc::t_6899416b056178 1-231
+  s_986445d2ef76dc::t_025d382df081c0 232
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_986445d2ef76dc::t_7c028613754bda 483-484
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_986445d2ef76dc::t_f818d660afd0c5 698-700,843-870
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d153c15ec06cd5d088b12a8acdcb0cbd503fae75",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "unknown"
+      },
+      "human_author": null
+    }
+  }
+}
