@@ -1,0 +1,21 @@
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_ephemeral_containers_test.go
+  s_986445d2ef76dc::t_6899416b056178 1-231
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_986445d2ef76dc::t_16c43b7d24cbef 39,80,93-96,142-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "463574e9d173246ec4507e82c48c00101cd9701a",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "unknown"
+      },
+      "human_author": null
+    }
+  }
+}
