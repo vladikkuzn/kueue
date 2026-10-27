@@ -1,0 +1,23 @@
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_17d02baad7b52a::t_ce352a24d7ef62 484,510-532
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_17d02baad7b52a::t_db92ab058e55f1 128-198
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_17d02baad7b52a::t_c1d386b0673078 2006-2026
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bbc8fa1c9e9f21a82a4de98402fcea995c3890e0",
+  "prompts": {},
+  "sessions": {
+    "s_17d02baad7b52a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "949f9b4b-a4b3-4718-811d-57e9167b7e76",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
