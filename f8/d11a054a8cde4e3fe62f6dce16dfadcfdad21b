@@ -1,0 +1,24 @@
+pkg/controller/admissionchecks/provisioning/podtemplate_validation_test.go
+  s_986445d2ef76dc::t_12537ddf600207 1-153
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_podtemplate_test.go
+  s_986445d2ef76dc::t_ff1e9dfe7aebeb 1-313
+  s_986445d2ef76dc::t_bc0db2ecd1150e 314-366
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_986445d2ef76dc::t_eb8247d08e225d 40-41,84-85,102-112,176-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f8d11a054a8cde4e3fe62f6dce16dfadcfdad21b",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
