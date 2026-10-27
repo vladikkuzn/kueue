@@ -1,0 +1,23 @@
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_17d02baad7b52a::t_2e4a2c847d5242 38,44,50,1892,1938-2008
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_17d02baad7b52a::t_88acf6104f0ca5 39,66,79-81,94-97,109,144-160
+pkg/util/testingjobs/jobset/wrappers.go
+  s_17d02baad7b52a::t_229dfa8209a5f0 189-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ee04253dca0f19824d162a6c2397c1075dd1d9e",
+  "prompts": {},
+  "sessions": {
+    "s_17d02baad7b52a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "949f9b4b-a4b3-4718-811d-57e9167b7e76",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
