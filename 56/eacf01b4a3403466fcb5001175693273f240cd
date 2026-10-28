@@ -1,0 +1,21 @@
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_986445d2ef76dc::t_92f8a808ceafdc 27,49-50,1892,1938-2020
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_986445d2ef76dc::t_2d501556823017 39-40,67,80-82,95-98,144-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "56eacf01b4a3403466fcb5001175693273f240cd",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}

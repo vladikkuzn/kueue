@@ -1,0 +1,19 @@
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_986445d2ef76dc::t_7375a6187e6e7e 21,1892-1897,1899,1945-1951,1954-1957,1967-2004,2006-2019,2021-2039,2041-2057
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28ecf026c8c91dee1537174bafe7b19ca3c64b31",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
