@@ -1,0 +1,32 @@
+pkg/controller/jobs/pod/pod_multikueue_adapter.go
+  s_ee325b3eb9bb8d::t_abd08bbe6477f5 239-240
+test/integration/multikueue/pod_test.go
+  s_ee325b3eb9bb8d::t_3563ca549a9acc 181-195,201-234
+  s_694606f9fdf5f7::t_5555ecceb1611c 41
+  s_ee325b3eb9bb8d::t_33ef34fa52fbba 196-200
+  s_694606f9fdf5f7::t_508e390c71604d 49-53,57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "be22608f643f283b3895bad10e29747595a618a8",
+  "prompts": {},
+  "sessions": {
+    "s_694606f9fdf5f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14677ab3-81f4-4a0d-8341-830947dbd523",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_ee325b3eb9bb8d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "562cbebd-e5e3-461a-bbf1-4cf0a83e0915",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
