@@ -1,0 +1,48 @@
+pkg/controller/jobs/raycluster/common_test.go
+  s_986445d2ef76dc::t_08ecb68157182a 24,445-452,2030-2032,2036,2044-2046,2048-2050,2064,2067-2070
+  s_986445d2ef76dc::t_dace198fd000ec 317,323,343,345-346,382,391,393-394,407-444
+  s_986445d2ef76dc::t_3d3c6cab01b6cb 2033-2035,2037-2043,2047,2051-2063,2065-2066
+pkg/controller/jobs/rayservice/rayservice_controller_test.go
+  s_986445d2ef76dc::t_f592be5f31d2ae 57-58,463,475,498
+pkg/controller/jobs/rayservice/rayservice_controller.go
+  s_986445d2ef76dc::t_71182a72b7e987 131,134,136
+  s_986445d2ef76dc::t_fcb7d89483ecdf 132
+pkg/controller/jobs/rayjob/rayjob_controller_test.go
+  s_986445d2ef76dc::t_feedcbc80a3cc9 33,746-749,755-757,763-764,767-771,777-782,798-804
+  s_986445d2ef76dc::t_1c0653c85f7e9c 676,682,701,703-704
+  s_986445d2ef76dc::t_01d9e193da45f7 21,742,754,805-807
+  s_986445d2ef76dc::t_cb984b8625588d 743-745,750-753,758-762,765-766,772-776,783-797
+pkg/controller/jobs/rayjob/rayjob_controller.go
+  s_986445d2ef76dc::t_fca65f45f28d50 327-331,340
+  s_986445d2ef76dc::t_bedb98d6967d0b 98,101,103,291
+  s_986445d2ef76dc::t_ad800160985188 99
+pkg/controller/jobs/raycluster/common.go
+  s_986445d2ef76dc::t_b8a7bf34db8f1c 134,245-249,253-259,286-290,292-299,303
+  s_986445d2ef76dc::t_eb78be2ab44da5 266-268
+  s_986445d2ef76dc::t_5e7e549d198a1f 261-265,269-271
+  s_986445d2ef76dc::t_27d133207f6ff5 49,52,250-252,260,272-283
+pkg/controller/jobs/raycluster/raycluster_controller.go
+  s_986445d2ef76dc::t_a7cb293830ad31 85,88,90
+  s_986445d2ef76dc::t_ffd08c7490d850 86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cefd08dff3805ea8b2c4352531865fce9c98b341",
+  "prompts": {},
+  "humans": {
+    "h_e4bdc46d73e6f7": {
+      "author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
