@@ -1,0 +1,21 @@
+pkg/controller/jobs/raycluster/common.go
+  s_986445d2ef76dc::t_eb78be2ab44da5 266-268
+pkg/controller/jobs/rayjob/rayjob_controller_test.go
+  s_986445d2ef76dc::t_cb984b8625588d 743-745,750-753,758-762,765-766,772-776,783-797
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2d7ae8410321d0d48537d243f443427f4691842a",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
