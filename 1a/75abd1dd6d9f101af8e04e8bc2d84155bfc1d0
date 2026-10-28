@@ -1,0 +1,25 @@
+pkg/util/equality/podset.go
+  s_986445d2ef76dc::t_b5719abf50b709 20-21,24,36,59-63,67-78,171-172,176-188
+pkg/util/equality/podset_test.go
+  s_986445d2ef76dc::t_1219da1d92a6e5 116,119-177,436-438,446-457
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_986445d2ef76dc::t_92f8a808ceafdc 27,49-50,1892,1938-2020
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_986445d2ef76dc::t_2d501556823017 39-40,67,80-82,95-98,144-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a75abd1dd6d9f101af8e04e8bc2d84155bfc1d0",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
