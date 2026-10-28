@@ -1,0 +1,24 @@
+pkg/controller/jobs/raycluster/common.go
+  h_e4bdc46d73e6f7 49,52,250-252,260-278
+pkg/controller/jobs/raycluster/common_test.go
+  h_e4bdc46d73e6f7 24,45,446-453,2031-2067
+pkg/controller/jobs/raycluster/raycluster_controller.go
+  h_e4bdc46d73e6f7 85-86,88,90
+pkg/controller/jobs/rayjob/rayjob_controller.go
+  h_e4bdc46d73e6f7 98-99,101,103,291
+pkg/controller/jobs/rayjob/rayjob_controller_test.go
+  h_e4bdc46d73e6f7 21,36,742-766
+pkg/controller/jobs/rayservice/rayservice_controller.go
+  h_e4bdc46d73e6f7 131-132,134,136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "35379d0f6369be402dcaba24ad403ace5e7ae415",
+  "prompts": {},
+  "humans": {
+    "h_e4bdc46d73e6f7": {
+      "author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
