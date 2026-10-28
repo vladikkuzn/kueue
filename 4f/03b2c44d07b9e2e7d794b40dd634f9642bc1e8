@@ -1,0 +1,21 @@
+pkg/util/equality/podset.go
+  s_986445d2ef76dc::t_b5719abf50b709 20-21,24,36,59-76,168-170,174-186
+pkg/util/equality/podset_test.go
+  s_986445d2ef76dc::t_1219da1d92a6e5 116,119-177,436-438,446-457
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f03b2c44d07b9e2e7d794b40dd634f9642bc1e8",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
