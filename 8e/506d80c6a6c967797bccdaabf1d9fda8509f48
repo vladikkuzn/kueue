@@ -1,0 +1,33 @@
+pkg/controller/jobs/raycluster/common.go
+  s_986445d2ef76dc::t_27d133207f6ff5 49,52,250-252,260-278
+pkg/controller/jobs/raycluster/common_test.go
+  s_986445d2ef76dc::t_08ecb68157182a 24,45,446-453,2031-2067
+pkg/controller/jobs/raycluster/raycluster_controller.go
+  s_986445d2ef76dc::t_a7cb293830ad31 85-86,88,90
+pkg/controller/jobs/rayjob/rayjob_controller.go
+  s_986445d2ef76dc::t_bedb98d6967d0b 98-99,101,103,291
+pkg/controller/jobs/rayjob/rayjob_controller_test.go
+  s_986445d2ef76dc::t_01d9e193da45f7 21,36,742-766
+pkg/controller/jobs/rayservice/rayservice_controller.go
+  s_986445d2ef76dc::t_71182a72b7e987 131-132,134,136
+pkg/util/equality/podset.go
+  s_986445d2ef76dc::t_fa739e73c93b4e 20-21,24,36-37,60-69,161-163,167-179
+pkg/util/equality/podset_test.go
+  s_986445d2ef76dc::t_c8fc3285de1e1a 116,119-141,400-402,410-416
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e506d80c6a6c967797bccdaabf1d9fda8509f48",
+  "prompts": {},
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
