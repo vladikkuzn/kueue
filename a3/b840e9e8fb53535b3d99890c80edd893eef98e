@@ -1,0 +1,61 @@
+pkg/controller/jobs/raycluster/common.go
+  s_986445d2ef76dc::t_b8a7bf34db8f1c 134,245-249,253-259,286-290,292-299,303
+  h_e4bdc46d73e6f7 49,52,250-252,260,272-283
+  s_986445d2ef76dc::t_27d133207f6ff5 49,52,250-252,260,272-283
+  s_986445d2ef76dc::t_5e7e549d198a1f 261-265,269-271
+  s_986445d2ef76dc::t_eb78be2ab44da5 266-268
+pkg/controller/jobs/raycluster/common_test.go
+  s_986445d2ef76dc::t_dace198fd000ec 317,323,343,345-346,382,391,393-394,407-444
+  h_e4bdc46d73e6f7 24,445-452,2030-2031,2032,2036,2044-2046,2048-2050,2064,2067-2070
+  s_986445d2ef76dc::t_08ecb68157182a 24,445-452,2030-2031,2032,2036,2044-2046,2048-2050,2064,2067-2070
+  s_986445d2ef76dc::t_3d3c6cab01b6cb 2033-2035,2037-2043,2047,2051-2063,2065-2066
+pkg/controller/jobs/rayjob/rayjob_controller.go
+  s_986445d2ef76dc::t_fca65f45f28d50 327-331,340
+  h_e4bdc46d73e6f7 98,101,103,291
+  s_986445d2ef76dc::t_bedb98d6967d0b 98,101,103,291
+  s_986445d2ef76dc::t_ad800160985188 99
+pkg/controller/jobs/rayjob/rayjob_controller_test.go
+  s_986445d2ef76dc::t_1c0653c85f7e9c 676,682,701,703-704
+  h_e4bdc46d73e6f7 21,742,754,805-807
+  s_986445d2ef76dc::t_01d9e193da45f7 21,742,754,805-807
+  s_986445d2ef76dc::t_feedcbc80a3cc9 33,746-749,755-757,763-764,767-771,777-782,798-804
+  s_986445d2ef76dc::t_cb984b8625588d 743-745,750-753,758-762,765-766,772-776,783-797
+pkg/controller/jobs/rayservice/rayservice_controller_test.go
+  s_986445d2ef76dc::t_f592be5f31d2ae 57-58,463,475,498
+pkg/controller/jobs/raycluster/raycluster_controller.go
+  h_e4bdc46d73e6f7 85,88,90
+  s_986445d2ef76dc::t_a7cb293830ad31 85,88,90
+  s_986445d2ef76dc::t_ffd08c7490d850 86
+pkg/controller/jobs/rayservice/rayservice_controller.go
+  h_e4bdc46d73e6f7 131,134,136
+  s_986445d2ef76dc::t_71182a72b7e987 131,134,136
+  s_986445d2ef76dc::t_fcb7d89483ecdf 132
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_986445d2ef76dc::t_2d501556823017 39-40,67,80-82,95-98,144-163
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_986445d2ef76dc::t_b49cc029c3681d 23,1968-1972,1974-1990,1993-2002,2008-2013,2019-2022,2024,2029,2033-2035,2038-2039,2045,2050-2059,2063,2068
+  s_986445d2ef76dc::t_92f8a808ceafdc 29,51-52,1953-1954,1959-1967,2048,2098-2099
+  s_986445d2ef76dc::t_7375a6187e6e7e 21,1893-1898,1900,1946-1952,1955-1958,2003-2007,2014-2018,2023,2025-2028,2030-2032,2036-2037,2040,2046-2047,2049,2060-2062,2064-2067,2069-2097
+  s_986445d2ef76dc::t_f2787b9beb9fca 1973,1991-1992,2041-2044
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a3b840e9e8fb53535b3d99890c80edd893eef98e",
+  "prompts": {},
+  "humans": {
+    "h_e4bdc46d73e6f7": {
+      "author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_986445d2ef76dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4a37a26c-897b-4e18-aaf2-822a6999e770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
