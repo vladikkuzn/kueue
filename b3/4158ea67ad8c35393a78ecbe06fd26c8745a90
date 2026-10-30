@@ -1,0 +1,30 @@
+site/content/en/community/contribution_guidelines/development.md
+  s_f1276c0ec2a492::t_499e9f99325d75 128-129
+  s_4eb02d991ba5cf::t_32ed22730f5884 124-127
+hack/make/test.mk
+  s_f1276c0ec2a492::t_2ce3b4b95938b9 100-105,124-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b34158ea67ad8c35393a78ecbe06fd26c8745a90",
+  "prompts": {},
+  "sessions": {
+    "s_4eb02d991ba5cf": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6a52750b-c745-4955-80b3-3e1fc0d8f916",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_f1276c0ec2a492": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2382457a-f25e-4b4a-9190-251c9ef83f5d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
