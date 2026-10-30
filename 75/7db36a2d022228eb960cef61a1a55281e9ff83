@@ -1,0 +1,41 @@
+codecov.yml
+  s_4eb02d991ba5cf::t_d9b7f0865ec588 1-22
+site/content/en/community/contribution_guidelines/development.md
+  s_4eb02d991ba5cf::t_32ed22730f5884 124-127
+.github/workflows/unit-coverage.yaml
+  s_4eb02d991ba5cf::t_1cdc9e3dbd4bcf 1-15,17-19,21-68
+  s_ee23ea723b2565::t_3ebab22060c166 20
+  s_f9a9f7c88bd4e1::t_bec342a8a1647c 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "757db36a2d022228eb960cef61a1a55281e9ff83",
+  "prompts": {},
+  "sessions": {
+    "s_4eb02d991ba5cf": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6a52750b-c745-4955-80b3-3e1fc0d8f916",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_ee23ea723b2565": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ac007d31-1a35-4793-9d70-15c9724bd842",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_f9a9f7c88bd4e1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bbdfbf35-e8a8-4c02-b5eb-c5b2db58b0de",
+        "model": "grok-4.7-high"
+      },
+      "human_author": null
+    }
+  }
+}
