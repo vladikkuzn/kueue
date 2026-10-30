@@ -1,0 +1,73 @@
+hack/make/verify.mk
+  s_7f79f24766fd63::t_9953cc690db6f7 322-325
+  s_beff84488ef1fc::t_58f55bec93f679 120
+hack/testing/unit-coverage-auth-re_test.sh
+  s_ee23ea723b2565::t_8c93ebba3300f3 1-61,63-66,68
+  s_c8e303f840d908::t_1f823813da8f37 62,67
+codecov.yml
+  s_4eb02d991ba5cf::t_d9b7f0865ec588 1-22
+site/content/en/community/contribution_guidelines/development.md
+  s_4eb02d991ba5cf::t_32ed22730f5884 124-127
+.github/workflows/unit-coverage.yaml
+  s_c8e303f840d908::t_4d949b4ec01508 157
+  s_f9a9f7c88bd4e1::t_bec342a8a1647c 12
+  s_ee23ea723b2565::t_3ebab22060c166 16-17
+  s_4eb02d991ba5cf::t_72814af80af3ec 132,138-152,164
+  s_4eb02d991ba5cf::t_1cdc9e3dbd4bcf 1-11,13-15,18-131,133-137,153-156,158-163,165-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a133d0b7ca7393ac1b739551755f91603aa7047",
+  "prompts": {},
+  "sessions": {
+    "s_4eb02d991ba5cf": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6a52750b-c745-4955-80b3-3e1fc0d8f916",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_7f79f24766fd63": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f1182f56-4244-42f7-8c5e-4a0c7db5d773",
+        "model": "composer-2.5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_beff84488ef1fc": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7e7f334c-b5f6-4899-9de1-bd98a16018ce",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_c8e303f840d908": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "6c2eaabe-1589-418e-b0d0-e9bcc07df876",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_ee23ea723b2565": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ac007d31-1a35-4793-9d70-15c9724bd842",
+        "model": "grok-4.7-high"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_f9a9f7c88bd4e1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "bbdfbf35-e8a8-4c02-b5eb-c5b2db58b0de",
+        "model": "grok-4.7-high"
+      },
+      "human_author": null
+    }
+  }
+}
