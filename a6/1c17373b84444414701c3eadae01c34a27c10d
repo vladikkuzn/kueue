@@ -1,0 +1,27 @@
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_1bf307f8b8b177::t_2996b818d12baf 447,473-505
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_1bf307f8b8b177::t_a3687167907d8a 57-159
+pkg/util/testingjobs/statefulset/wrappers.go
+  s_1bf307f8b8b177::t_e471c6f842856e 263-274
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_1bf307f8b8b177::t_f045030ee2685a 40,46,1687,1733-1823
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_1bf307f8b8b177::t_9f51e80a46a586 38-39,78-80,93-96,141-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a61c17373b84444414701c3eadae01c34a27c10d",
+  "prompts": {},
+  "sessions": {
+    "s_1bf307f8b8b177": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9bb11cdd-b523-43a1-af0f-279f2f46599a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
