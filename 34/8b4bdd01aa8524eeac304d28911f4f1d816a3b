@@ -1,0 +1,25 @@
+hack/testing/merge-coverprofiles_test.sh
+  s_335d270b83bbd6::t_c128e16d55d3ca 75-86
+.github/workflows/codecov-prow.yaml
+  s_335d270b83bbd6::t_36ef41895221bb 59-60,121-131,136-137
+hack/testing/fetch-prow-unit-coverage.sh
+  s_335d270b83bbd6::t_a9fb3cd9f9e62b 30-31,43,57-58,92-123,208-212,294-297
+hack/testing/merge-coverprofiles.sh
+  s_335d270b83bbd6::t_d22fdcd43e94e2 60-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "348b4bdd01aa8524eeac304d28911f4f1d816a3b",
+  "prompts": {},
+  "sessions": {
+    "s_335d270b83bbd6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b6fde1d3-15cf-4487-b0c5-f36d2838601e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
