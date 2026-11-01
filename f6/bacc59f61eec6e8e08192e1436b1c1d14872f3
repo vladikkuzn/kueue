@@ -1,0 +1,31 @@
+codecov.yml
+  s_7edb3959f5b31b::t_5bd88b7957c9c3 38-39
+  s_7edb3959f5b31b::t_c7f1d6ad15a289 1-3
+  s_7edb3959f5b31b::t_51956ae0050674 4-6,35-37
+  s_7edb3959f5b31b::t_6e1b829e1d844d 40-42
+  s_7edb3959f5b31b::t_97a7935a07e4c2 7-34,43-45
+.github/workflows/codecov-prow.yaml
+  s_7edb3959f5b31b::t_f918771b98817e 1-119
+hack/make/verify.mk
+  s_7edb3959f5b31b::t_a5d4bfb4f99e9e 120,322-325
+hack/testing/fetch-prow-merged-coverage.sh
+  s_7edb3959f5b31b::t_5fe8daf547d849 1-378
+hack/testing/fetch-prow-merged-coverage_test.sh
+  s_7edb3959f5b31b::t_105210e5cc4ceb 1-336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6bacc59f61eec6e8e08192e1436b1c1d14872f3",
+  "prompts": {},
+  "sessions": {
+    "s_7edb3959f5b31b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02914f17-05f2-4596-b9e3-4b2b586c0e51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
