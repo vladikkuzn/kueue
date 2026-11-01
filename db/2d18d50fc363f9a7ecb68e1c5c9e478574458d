@@ -1,0 +1,14 @@
+.github/workflows/codecov-prow.yaml
+  h_e4bdc46d73e6f7 15-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db2d18d50fc363f9a7ecb68e1c5c9e478574458d",
+  "prompts": {},
+  "humans": {
+    "h_e4bdc46d73e6f7": {
+      "author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
