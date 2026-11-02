@@ -1,0 +1,19 @@
+hack/make/test.mk
+  s_bb2a445133f339::t_a52a041e26b032 131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4239af574434c00d09bd3c8861258eb12880211b",
+  "prompts": {},
+  "sessions": {
+    "s_bb2a445133f339": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-97806eff-9406-470d-be79-0a88e489c258",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
