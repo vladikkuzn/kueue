@@ -1,0 +1,51 @@
+cmd/experimental/skills/kueue-pr-evidence-state-diff/SKILL.md
+  s_887c930aebe83f::t_4316259f02eef3 1-122
+cmd/experimental/skills/README.md
+  s_887c930aebe83f::t_7c8da878ba87b0 19,56-57
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenario-format.md
+  s_887c930aebe83f::t_364f2d6b32d23a 1-179
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenarios/cohort-reclaim.yaml
+  s_887c930aebe83f::t_9078de78c99ec7 1-100
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenarios/drain-held-localqueue.yaml
+  s_887c930aebe83f::t_0ce953328f82b4 1-57
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenarios/no-matching-flavor.yaml
+  s_887c930aebe83f::t_fedbdc7e2027b1 1-118
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenarios/preempt-within-cq.yaml
+  s_887c930aebe83f::t_fb9461a40836f7 1-78
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenarios/priority-boost-no-wpc.yaml
+  s_887c930aebe83f::t_55d8e1e2ac4254 1-72
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenarios/tas-podset-no-node-fit.yaml
+  s_887c930aebe83f::t_65f39df47562f8 1-110
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/driver/driver_test.go.tmpl
+  s_887c930aebe83f::t_a14a90c2b61ca7 1-421
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/state-diff
+  s_887c930aebe83f::t_ebe8dcdeb98fdb 1-469
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/state_diff_lib.py
+  s_887c930aebe83f::t_39313fb09119c5 1-693
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/fixtures/normalize.golden.json
+  s_887c930aebe83f::t_990612d21f1fa9 1-149
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/fixtures/run-priority-boost/capture.base.json
+  s_887c930aebe83f::t_bb09785a22b069 1-221
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/fixtures/run-priority-boost/capture.head.json
+  s_887c930aebe83f::t_bca605085067ff 1-512
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/fixtures/run-priority-boost/run.json
+  s_887c930aebe83f::t_b96f11b7c9d7c1 1-117
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/state_diff_test.py
+  s_887c930aebe83f::t_e41766aca5a1d0 1-438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ed3a438cc1e2306965fae3bf0042c9f14e5056a",
+  "prompts": {},
+  "sessions": {
+    "s_887c930aebe83f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c87aa19f-f96b-409a-ac75-0014625e8d09",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
