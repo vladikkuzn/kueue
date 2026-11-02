@@ -1,0 +1,47 @@
+cmd/experimental/skills/kueue-pr-evidence-common/SKILL.md
+  s_4435cb92076c82::t_53d69d5960b064 1-118
+cmd/experimental/skills/README.md
+  s_4435cb92076c82::t_9b2113fd6065a4 18,53-54
+cmd/experimental/skills/kueue-pr-evidence-common/capture-schema.md
+  s_4435cb92076c82::t_1409a39087578a 1-99
+cmd/experimental/skills/kueue-pr-evidence-common/examples/capture.example.json
+  s_4435cb92076c82::t_3e1bf704131e6f 1-307
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/inject-pr-notes
+  s_4435cb92076c82::t_0e87c627c50089 1-340
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/kueue-worktree.sh
+  s_4435cb92076c82::t_fbc7d2b717b988 1-102
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/merge-base.sh
+  s_4435cb92076c82::t_e490902d127d44 1-89
+cmd/experimental/skills/kueue-pr-evidence-common/tests/fixtures/block.txt
+  s_4435cb92076c82::t_44d6850c3886b1 1-12
+cmd/experimental/skills/kueue-pr-evidence-common/tests/fixtures/existing-block.txt
+  s_4435cb92076c82::t_ec03672e926fc0 1-21
+cmd/experimental/skills/kueue-pr-evidence-common/tests/fixtures/missing-section.txt
+  s_4435cb92076c82::t_fe47bf6b67f988 1-9
+cmd/experimental/skills/kueue-pr-evidence-common/tests/fixtures/template-empty-notes.expected.txt
+  s_4435cb92076c82::t_8cff7271e139d6 1-38
+cmd/experimental/skills/kueue-pr-evidence-common/tests/fixtures/template-empty-notes.txt
+  s_4435cb92076c82::t_52115944efee5d 1-21
+cmd/experimental/skills/kueue-pr-evidence-common/tests/fixtures/two-skills.txt
+  s_4435cb92076c82::t_3079d750c59a48 1-22
+cmd/experimental/skills/kueue-pr-evidence-common/tests/inject_pr_notes_test.py
+  s_4435cb92076c82::t_0d88cd2ee08348 1-327
+cmd/experimental/skills/kueue-pr-evidence-common/tests/scripts_test.py
+  s_4435cb92076c82::t_01fbb0187590a0 1-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbf534a36fc59a8936bfe65e9db0cf9650308fa4",
+  "prompts": {},
+  "sessions": {
+    "s_4435cb92076c82": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9d74808e-a669-428c-adc1-bd95c44e095d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
