@@ -1,0 +1,19 @@
+hack/images/golang/Dockerfile
+  s_d10c11a4d001bb::t_67fa8e94f64d8c 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5c38d945cffdf465087101c2c5f42bcb1acabe4",
+  "prompts": {},
+  "sessions": {
+    "s_d10c11a4d001bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b5a2e5c9-daf4-4429-98b1-398190725b92",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
