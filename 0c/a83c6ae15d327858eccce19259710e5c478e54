@@ -1,0 +1,143 @@
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/SKILL.md
+  s_cbcd2830e23ac9::t_7222f231e8c35c 1-136
+cmd/experimental/skills/README.md
+  s_cbcd2830e23ac9::t_e5dcf645f2ff98 19,56-57
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/scripts/perf-delta
+  s_cbcd2830e23ac9::t_3ecd031c7d4902 1-1278
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-1/make.log
+  s_cbcd2830e23ac9::t_7fee9f8a1c092e 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-1/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_ac76a60fc031aa 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-1/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_ac5f7e6f45f6a4 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-2/make.log
+  s_cbcd2830e23ac9::t_f39c9df33ff33f 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-2/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_df2407a810b1b3 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-2/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_807ffc41198694 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-3/make.log
+  s_cbcd2830e23ac9::t_7c1305f4bbf84a 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-3/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_fe0ff455af35e3 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/base-3/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_63c6af37a46901 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-1/make.log
+  s_cbcd2830e23ac9::t_f8226ee4cb6aa7 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-1/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_20ada692a1deb9 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-1/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_42cf803ffc2ff6 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-2/make.log
+  s_cbcd2830e23ac9::t_07564eb2990e1b 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-2/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_dfad8eccfdeae2 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-2/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_9a519b72ff924a 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-3/make.log
+  s_cbcd2830e23ac9::t_23f399c613b7f8 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-3/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_a7ace33c0c4448 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/head-3/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_afae4661472a1c 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-baseline/runs.json
+  s_cbcd2830e23ac9::t_79ea0a428fc942 1-99
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/base-1/make.log
+  s_cbcd2830e23ac9::t_b1dfa35bee01c5 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/base-1/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_d4dfae517561db 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/base-1/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_c0c97b9cb09730 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/base-2/run-performance-scheduler/make.log
+  s_cbcd2830e23ac9::t_b0a708ca9558bc 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/base-3/make.log
+  s_cbcd2830e23ac9::t_adc49b378bc539 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/base-3/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_3a9adb5e18838c 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/base-3/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_284ca866914589 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/head-1/make.log
+  s_cbcd2830e23ac9::t_38955918731333 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/head-1/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_05396a744e1662 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/head-1/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_9758465960e7c8 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/head-2/make.log
+  s_cbcd2830e23ac9::t_c037f43a87ac6d 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/head-2/run-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_798b1c627d9d39 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/head-2/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_172e45da2928f4 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/head-3/make.log
+  s_cbcd2830e23ac9::t_af3bf465457e7e 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/head-3/run-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_874ef364490f68 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-failed/runs.json
+  s_cbcd2830e23ac9::t_1589b31ff99211 1-99
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/base-1/make.log
+  s_cbcd2830e23ac9::t_ae1ba6e7966549 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/base-1/run-tas-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_be7f0407247145 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/base-1/run-tas-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_5c67daf291d188 1-54
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/base-2/make.log
+  s_cbcd2830e23ac9::t_7d9214cbffb9e0 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/base-2/run-tas-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_b82e0382c53bc5 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/base-2/run-tas-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_b257577695b102 1-54
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/head-1/make.log
+  s_cbcd2830e23ac9::t_28c5ac80ae1939 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/head-1/run-tas-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_07cddaadb754e3 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/head-1/run-tas-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_f260b64e2e9013 1-54
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/head-2/make.log
+  s_cbcd2830e23ac9::t_b0e206455f178a 1-5
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/head-2/run-tas-performance-scheduler/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_2bde25d0d3df07 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/head-2/run-tas-performance-scheduler/summary.yaml
+  s_cbcd2830e23ac9::t_8f1c18f796674e 1-54
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/local-tas-noise/runs.json
+  s_cbcd2830e23ac9::t_5604e925731514 1-75
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/pr-body-existing-block.txt
+  s_cbcd2830e23ac9::t_6883e5fccb813d 1-31
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/pr-body.txt
+  s_cbcd2830e23ac9::t_decf10e69cf49f 1-21
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/base/1980000000000000001/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_95e338bf14d02c 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/base/1980000000000000001/summary.yaml
+  s_cbcd2830e23ac9::t_c06f9af9560341 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/base/1980000000000000002/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_e5cc36d4a468c1 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/base/1980000000000000002/summary.yaml
+  s_cbcd2830e23ac9::t_ac6fd47f17818f 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/base/1980000000000000003/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_0e2ed9725def6e 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/base/1980000000000000003/summary.yaml
+  s_cbcd2830e23ac9::t_b7425fdfbd3aee 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/head/1979000000000000001/minimalkueue.stats.yaml
+  s_cbcd2830e23ac9::t_73e56b69794583 1-4
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/head/1979000000000000001/summary.yaml
+  s_cbcd2830e23ac9::t_510564b1a28bb1 1-24
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/fixtures/prow-baseline/prow.json
+  s_cbcd2830e23ac9::t_a79daa0584f14d 1-53
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/tests/perf_delta_test.py
+  s_cbcd2830e23ac9::t_24912dd8f03157 1-567
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0ca83c6ae15d327858eccce19259710e5c478e54",
+  "prompts": {},
+  "sessions": {
+    "s_cbcd2830e23ac9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e046a510-a71e-4584-9641-44cf7006870e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
