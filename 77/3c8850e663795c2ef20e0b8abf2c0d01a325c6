@@ -1,0 +1,76 @@
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/render_timeline_test.py
+  s_fc79e4f708ffc9::t_46d77753905a8a 261-271,278,299,302,310,323
+  s_d9080428b81fdb::t_2cc9e34adc6c46 1-260,272-277,279-298,300-301,303-309,311-322,324-384
+cmd/experimental/skills/kueue-pr-evidence-timeline/SKILL.md
+  s_fc79e4f708ffc9::t_7c016e6ef9d3fc 1-119
+cmd/experimental/skills/README.md
+  s_fc79e4f708ffc9::t_78d71545d14856 19,56-57
+cmd/experimental/skills/kueue-pr-evidence-timeline/scripts/render-timeline
+  s_fc79e4f708ffc9::t_d9cb63c7b01280 1-991
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/cohort-reclaim-real/capture.base.json
+  s_fc79e4f708ffc9::t_f4a90d16c98dcf 1-939
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/cohort-reclaim-real/capture.head.json
+  s_fc79e4f708ffc9::t_89770b0ca850e3 1-1740
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/cohort-reclaim-real/expected.txt
+  s_fc79e4f708ffc9::t_716c953a187b8d 1-103
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/fair-sharing-partial-borrowing/capture.base.json
+  s_fc79e4f708ffc9::t_48664a809a5a75 1-724
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/fair-sharing-partial-borrowing/capture.head.json
+  s_fc79e4f708ffc9::t_367e0706bd85cf 1-864
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/fair-sharing-partial-borrowing/expected.txt
+  s_fc79e4f708ffc9::t_9165cd965ec130 1-76
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/no-decisions/capture.base.json
+  s_fc79e4f708ffc9::t_1bb1c99b34ee0e 1-45
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/no-decisions/capture.head.json
+  s_fc79e4f708ffc9::t_8eebbd4b3cc723 1-45
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/pr-body.txt
+  s_fc79e4f708ffc9::t_fb0e14030e202c 1-29
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/preemption-in-cq/capture.base.json
+  s_fc79e4f708ffc9::t_95b000c040e7fe 1-281
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/preemption-in-cq/capture.head.json
+  s_fc79e4f708ffc9::t_36197ad5ba3341 1-292
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/preemption-in-cq/expected.txt
+  s_fc79e4f708ffc9::t_2ae4f99e224159 1-48
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/priority-boost-real/capture.base.json
+  s_fc79e4f708ffc9::t_08ed6bd6555cb2 1-221
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/priority-boost-real/capture.head.json
+  s_fc79e4f708ffc9::t_8345380b518e60 1-512
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/priority-boost-real/expected.txt
+  s_fc79e4f708ffc9::t_a3f7495f7a883e 1-72
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/tas-elastic-replacement-real/capture.base.json
+  s_fc79e4f708ffc9::t_c0dd6ca56a9080 1-367
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/tas-elastic-replacement-real/capture.head.json
+  s_fc79e4f708ffc9::t_fa0bf6b994502d 1-797
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/tas-elastic-replacement-real/expected.txt
+  s_fc79e4f708ffc9::t_9bce12be1dad7b 1-90
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/tas-lws-group-hotswap/capture.base.json
+  s_fc79e4f708ffc9::t_d2d355af8d6776 1-273
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/tas-lws-group-hotswap/capture.head.json
+  s_fc79e4f708ffc9::t_b2c2fcb1433585 1-273
+cmd/experimental/skills/kueue-pr-evidence-timeline/tests/fixtures/tas-lws-group-hotswap/expected.txt
+  s_fc79e4f708ffc9::t_1c23905fcaf4ce 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "773c8850e663795c2ef20e0b8abf2c0d01a325c6",
+  "prompts": {},
+  "sessions": {
+    "s_d9080428b81fdb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abd28dee-c1b6-4577-bc02-fe96f91503a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_fc79e4f708ffc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a7c7f77-c300-4389-915b-f5654b011e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
