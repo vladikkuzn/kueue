@@ -1,0 +1,103 @@
+**Scheduling decisions differ** from `preemptor-created`: preemptions 0 → 1, requeues 0 → 1, admissions 6 → 8; base capture ends after `preemptor-created`.
+
+Scenario `cohort-nominal-reclaim` · runner **envtest** (k8s 1.37.0) · from `kueue-pr-evidence-state-diff` captures
+
+| # | checkpoint | base | head |
+|---|---|---|---|
+| 0 | `b-borrows-flavor1` | admit wl-b | same |
+| 1 | `noisy-borrow-flavor2` | admit noisy-1 · admit noisy-2 · admit noisy-3 · admit noisy-4 · admit noisy-5 | same |
+| 2 | `preemptor-created` ≠ | pending wl-a | preempt wl-a→wl-b (InCohortReclamation) · pending wl-a |
+| 3 | `borrower-preempted` ≠ | — (capture ended) | — |
+| 4 | `preemptor-admitted` ≠ | — (capture ended) | admit wl-a · requeue wl-b · pending wl-b · admit wl-b |
+
+Preemptions (preemptor → preemptee; `?` = inferred):
+
+| preemptor → preemptee | reason | priority | base | head |
+|---|---|---|---|---|
+| wl-a → wl-b | InCohortReclamation | 0 vs 0 | 0 | 1 |
+
+<details><summary>Mermaid timeline (base vs head)</summary>
+
+```mermaid
+sequenceDiagram
+    participant K as kueue
+    participant W0 as wl-b p0
+    participant W1 as noisy-1 p0
+    participant W2 as noisy-2 p0
+    participant W3 as noisy-3 p0
+    participant W4 as noisy-4 p0
+    participant W5 as noisy-5 p0
+    participant W6 as wl-a p0
+    Note over K,W6: 0 b-borrows-flavor1 - base = head
+    K->>W0: admit b
+    Note over K,W6: 1 noisy-borrow-flavor2 - base = head
+    K->>W1: admit a-noisy
+    K->>W2: admit a-noisy
+    K->>W3: admit a-noisy
+    K->>W4: admit a-noisy
+    K->>W5: admit a-noisy
+    Note over K,W6: 2 preemptor-created - differs
+    par base
+        K--)W6: pending no quota cpu
+    and head
+        W6-xW0: preempt InCohortReclamation prio 0 vs 0
+        K--)W6: pending no quota cpu, awaits preemption
+    end
+    Note over K,W6: 3 borrower-preempted - differs
+    par base
+        Note over K: capture ended
+    and head
+        Note over K: no decisions
+    end
+    Note over K,W6: 4 preemptor-admitted - differs
+    par base
+        Note over K: capture ended
+    and head
+        K->>W6: admit a
+        K-->>W0: requeue
+        K--)W0: pending Workload no longer fits after processing another
+        K->>W0: admit b
+    end
+```
+
+</details>
+
+<details><summary>Text timeline (event order)</summary>
+
+```text
+scenario cohort-nominal-reclaim  base 6382a00a7577  head cb352053021c
+test     test/integration/singlecluster/scheduler/fairsharing/fair_sharing_test.go: Should preempt a workload borrowing cohort nominal quota, despite the preemptor's high aggregate DRS
+[0] b-borrows-flavor1 — ClusterQueue a Active=True; ClusterQueue a-noisy Active=True; ClusterQueue b Active=True; Workload pr-evidence/wl-b Admitted=True
+  base  e0        reserve  wl-b  b
+        e1        admit    wl-b  b
+  head  = base
+[1] noisy-borrow-flavor2 — Workload pr-evidence/noisy-1 Admitted=True; Workload pr-evidence/noisy-2 Admitted=True; Workload pr-evidence/noisy-3 Admitted=True; Workload pr-evidence/noisy-4 Admitted=True; Workload pr-evidence/noisy-5 Admitted=True; ClusterQueue a-noisy status.admittedWorkloads == 5
+  base  e2        reserve  noisy-1  a-noisy
+        e3        admit    noisy-1  a-noisy
+        e4        reserve  noisy-2  a-noisy
+        e5        admit    noisy-2  a-noisy
+        e6        reserve  noisy-3  a-noisy
+        e7        admit    noisy-3  a-noisy
+        e8        reserve  noisy-4  a-noisy
+        e9        admit    noisy-4  a-noisy
+        e10       reserve  noisy-5  a-noisy
+        e11       admit    noisy-5  a-noisy
+  head  = base
+[2] preemptor-created — Workload pr-evidence/wl-a QuotaReserved=False
+  base  e12       pending  wl-a  no quota: cpu
+  head  e12,e13   preempt  wl-a → wl-b  InCohortReclamation  prio 0 vs 0  [/all/cohort-a/a → /all/b]  +evicted
+        e15       pending  wl-a  no quota: cpu, awaits preemption
+[3] borrower-preempted — Workload pr-evidence/wl-b Evicted=True (Preempted)
+  base  (capture ended before this checkpoint)
+  head  (no decisions)
+[4] preemptor-admitted — Workload pr-evidence/wl-b is evicted; Workload pr-evidence/wl-a Admitted=True
+  base  (capture ended before this checkpoint)
+  head  e16       reserve  wl-a  a
+        e17       admit    wl-a  a
+        state     requeue  wl-b  (re-admitted)
+        e18       pending  wl-b  Workload no longer fits after processing another
+        e19       reserve  wl-b  b
+        e20       admit    wl-b  b
+```
+
+</details>

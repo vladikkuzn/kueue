@@ -1,0 +1,29 @@
+#### What type of PR is this?
+
+/kind bug
+
+#### What this PR does / why we need it:
+
+Avoid the fair sharing preemption loop for partial borrowing.
+
+#### Which issue(s) this PR fixes:
+
+Fixes #00000
+
+#### Special notes for your reviewer:
+
+#### Useful notes for your reviewer
+
+Author notes stay here.
+
+<!-- pr-evidence:kueue-pr-evidence-state-diff:start -->
+**kueue-pr-evidence-state-diff** base a0394b0b0570 -> head 0925c3d8d531
+
+STATE DIFF
+<!-- pr-evidence:kueue-pr-evidence-state-diff:end -->
+
+#### Does this PR introduce a user-facing change?
+
+```release-note
+Fix a fair sharing preemption loop when the preemptor borrows another resource.
+```

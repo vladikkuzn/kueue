@@ -1,0 +1,52 @@
+**Scheduling decisions differ** from `node-x1-replaced`; TAS placement differs for lws/leader, lws/worker.
+
+Scenario `tas-lws-group-hotswap` · runner **envtest** (k8s 1.34.1) · gates `TASFailedNodeReplacement=true, TopologyAwareScheduling=true` · from `kueue-pr-evidence-state-diff` captures
+
+| # | checkpoint | base | head |
+|---|---|---|---|
+| 0 | `lws-admitted` | admit lws | same |
+| 1 | `node-x1-replaced` ≠ | re-place lws: leader x1→x6, worker x1→x3 | re-place lws: leader x1→x3, worker x1→x4 |
+
+TAS placement (final, pods per `kubernetes.io/hostname` domain):
+
+| podset | domain | base | head |
+|---|---|---|---|
+| lws/leader | x3 | · | 1 ≠ |
+|  | x6 | 1 | · ≠ |
+| lws/worker | x2 | 1 | 1 |
+|  | x3 | 1 | · ≠ |
+|  | x4 | · | 1 ≠ |
+
+<details><summary>Mermaid timeline (base vs head)</summary>
+
+```mermaid
+sequenceDiagram
+    participant K as kueue
+    participant W0 as lws p0
+    Note over K,W0: 0 lws-admitted - base = head
+    K->>W0: admit tas-main
+    Note over K,W0: 1 node-x1-replaced - differs
+    par base
+        K->>W0: re-place leader x1 to x6, worker x1 to x3
+    and head
+        K->>W0: re-place leader x1 to x3, worker x1 to x4
+    end
+```
+
+</details>
+
+<details><summary>Text timeline (event order)</summary>
+
+```text
+scenario tas-lws-group-hotswap  base 8b7b63d81a0f  head 3de0c8c046db
+test     test/integration/singlecluster/tas/tas_test.go: PodSet group; node replacement keeps the group in one rack
+[0] lws-admitted — default/lws is admitted with leader and workers in rack r1
+  base  e0        reserve  lws  tas-main
+        e1        admit    lws  tas-main
+  head  = base
+[1] node-x1-replaced — default/lws stays admitted after node x1 became unhealthy and was replaced
+  base  state     place    lws  leader x1→x6, worker x1→x3
+  head  state     place    lws  leader x1→x3, worker x1→x4
+```
+
+</details>

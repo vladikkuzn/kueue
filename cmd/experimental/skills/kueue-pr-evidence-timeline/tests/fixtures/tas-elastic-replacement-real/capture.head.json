@@ -1,0 +1,797 @@
+{
+  "checkpoints": [
+    {
+      "assertion": "ClusterQueue elastic-accounting-cq Active=True; Workload pr-evidence/original Admitted=True; Workload pr-evidence/victim Admitted=True",
+      "clusterQueues": [
+        {
+          "admittedWorkloads": 0,
+          "flavorsUsage": [
+            {
+              "name": "elastic-accounting-flavor",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "elastic-accounting-cq",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        }
+      ],
+      "events": [
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "original",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue elastic-accounting-cq, wait time since queued was <duration>",
+          "order": 0,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "original",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue elastic-accounting-cq, wait time since reservation was <duration>",
+          "order": 1,
+          "reason": "Admitted",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "victim",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue elastic-accounting-cq, wait time since queued was <duration>",
+          "order": 2,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "victim",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue elastic-accounting-cq, wait time since reservation was <duration>",
+          "order": 3,
+          "reason": "Admitted",
+          "type": "Normal"
+        }
+      ],
+      "index": 0,
+      "localQueues": [
+        {
+          "admittedWorkloads": 0,
+          "clusterQueue": "elastic-accounting-cq",
+          "name": "queue",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        }
+      ],
+      "name": "node-full",
+      "workloads": [
+        {
+          "admission": {
+            "clusterQueue": "elastic-accounting-cq",
+            "podSetAssignments": [
+              {
+                "count": 2,
+                "flavors": {
+                  "cpu": "elastic-accounting-flavor"
+                },
+                "name": "workers",
+                "resourceUsage": {
+                  "cpu": "2"
+                },
+                "topologyAssignment": {
+                  "domains": [
+                    {
+                      "count": 2,
+                      "values": [
+                        "elastic-accounting-node"
+                      ]
+                    }
+                  ],
+                  "levels": [
+                    "kubernetes.io/hostname"
+                  ]
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue elastic-accounting-cq",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "original",
+          "namespace": "pr-evidence",
+          "priority": 10,
+          "queueName": "queue"
+        },
+        {
+          "admission": {
+            "clusterQueue": "elastic-accounting-cq",
+            "podSetAssignments": [
+              {
+                "count": 2,
+                "flavors": {
+                  "cpu": "elastic-accounting-flavor"
+                },
+                "name": "workers",
+                "resourceUsage": {
+                  "cpu": "2"
+                },
+                "topologyAssignment": {
+                  "domains": [
+                    {
+                      "count": 2,
+                      "values": [
+                        "elastic-accounting-node"
+                      ]
+                    }
+                  ],
+                  "levels": [
+                    "kubernetes.io/hostname"
+                  ]
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue elastic-accounting-cq",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "victim",
+          "namespace": "pr-evidence",
+          "priority": 1,
+          "queueName": "queue"
+        }
+      ]
+    },
+    {
+      "assertion": "Workload pr-evidence/replacement QuotaReserved=False",
+      "clusterQueues": [
+        {
+          "admittedWorkloads": 2,
+          "flavorsUsage": [
+            {
+              "name": "elastic-accounting-flavor",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "4"
+                }
+              ]
+            }
+          ],
+          "name": "elastic-accounting-cq",
+          "pendingWorkloads": 1,
+          "reservingWorkloads": 2
+        }
+      ],
+      "events": [
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "victim",
+            "namespace": "pr-evidence"
+          },
+          "message": "Preempted to accommodate a workload (UID: <uid>, JobUID: UNKNOWN) due to prioritization in the ClusterQueue; preemptor path: /elastic-accounting-cq; preemptee path: /elastic-accounting-cq",
+          "order": 4,
+          "reason": "EvictedDueToPreempted",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "victim",
+            "namespace": "pr-evidence"
+          },
+          "message": "Preempted to accommodate a workload (UID: <uid>, JobUID: UNKNOWN) due to prioritization in the ClusterQueue; preemptor path: /elastic-accounting-cq; preemptee path: /elastic-accounting-cq; preemptor effective priority: 10 (base: 10, boost: 0); preemptee effective priority: 1 (base: 1, boost: 0)",
+          "order": 5,
+          "reason": "Preempted",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "replacement",
+            "namespace": "pr-evidence"
+          },
+          "message": "Preempted workload pr-evidence/victim (UID: <uid>) in ClusterQueue elastic-accounting-cq; preemptor effective priority: 10 (base: 10, boost: 0); preemptee effective priority: 1 (base: 1, boost: 0)",
+          "order": 6,
+          "reason": "PreemptedWorkload",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "replacement",
+            "namespace": "pr-evidence"
+          },
+          "message": "couldn't assign flavors to pod set workers: topology \"elastic-accounting-topology\" doesn't allow to fit any of 2 pod(s). Total nodes: 1; excluded: resource \"cpu\": 1. Pending the preemption of 1 workload(s)",
+          "order": 7,
+          "reason": "WaitingForPreemptedWorkloads",
+          "type": "Warning"
+        }
+      ],
+      "index": 1,
+      "localQueues": [
+        {
+          "admittedWorkloads": 2,
+          "clusterQueue": "elastic-accounting-cq",
+          "name": "queue",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 1,
+          "reservingWorkloads": 2
+        }
+      ],
+      "name": "replacement-created",
+      "workloads": [
+        {
+          "admission": {
+            "clusterQueue": "elastic-accounting-cq",
+            "podSetAssignments": [
+              {
+                "count": 2,
+                "flavors": {
+                  "cpu": "elastic-accounting-flavor"
+                },
+                "name": "workers",
+                "resourceUsage": {
+                  "cpu": "2"
+                },
+                "topologyAssignment": {
+                  "domains": [
+                    {
+                      "count": 2,
+                      "values": [
+                        "elastic-accounting-node"
+                      ]
+                    }
+                  ],
+                  "levels": [
+                    "kubernetes.io/hostname"
+                  ]
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue elastic-accounting-cq",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "original",
+          "namespace": "pr-evidence",
+          "priority": 10,
+          "queueName": "queue"
+        },
+        {
+          "admission": null,
+          "conditions": [
+            {
+              "message": "The workload has no reservation",
+              "reason": "NoReservation",
+              "status": "False",
+              "type": "Admitted"
+            },
+            {
+              "message": "couldn't assign flavors to pod set workers: topology \"elastic-accounting-topology\" doesn't allow to fit any of 2 pod(s). Total nodes: 1; excluded: resource \"cpu\": 1. Pending the preemption of 1 workload(s)",
+              "reason": "WaitingForPreemptedWorkloads",
+              "status": "False",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "replacement",
+          "namespace": "pr-evidence",
+          "priority": 10,
+          "queueName": "queue"
+        },
+        {
+          "admission": {
+            "clusterQueue": "elastic-accounting-cq",
+            "podSetAssignments": [
+              {
+                "count": 2,
+                "flavors": {
+                  "cpu": "elastic-accounting-flavor"
+                },
+                "name": "workers",
+                "resourceUsage": {
+                  "cpu": "2"
+                },
+                "topologyAssignment": {
+                  "domains": [
+                    {
+                      "count": 2,
+                      "values": [
+                        "elastic-accounting-node"
+                      ]
+                    }
+                  ],
+                  "levels": [
+                    "kubernetes.io/hostname"
+                  ]
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Preempted to accommodate a workload (UID: <uid>, JobUID: UNKNOWN) due to prioritization in the ClusterQueue; preemptor path: /elastic-accounting-cq; preemptee path: /elastic-accounting-cq",
+              "reason": "Preempted",
+              "status": "True",
+              "type": "Evicted"
+            },
+            {
+              "message": "Preempted to accommodate a workload (UID: <uid>, JobUID: UNKNOWN) due to prioritization in the ClusterQueue; preemptor path: /elastic-accounting-cq; preemptee path: /elastic-accounting-cq",
+              "reason": "InClusterQueue",
+              "status": "True",
+              "type": "Preempted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue elastic-accounting-cq",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "victim",
+          "namespace": "pr-evidence",
+          "priority": 1,
+          "queueName": "queue"
+        }
+      ]
+    },
+    {
+      "assertion": "Workload pr-evidence/victim Evicted=True (Preempted)",
+      "clusterQueues": [
+        {
+          "admittedWorkloads": 2,
+          "flavorsUsage": [
+            {
+              "name": "elastic-accounting-flavor",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "4"
+                }
+              ]
+            }
+          ],
+          "name": "elastic-accounting-cq",
+          "pendingWorkloads": 1,
+          "reservingWorkloads": 2
+        }
+      ],
+      "events": [],
+      "index": 2,
+      "localQueues": [
+        {
+          "admittedWorkloads": 2,
+          "clusterQueue": "elastic-accounting-cq",
+          "name": "queue",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 1,
+          "reservingWorkloads": 2
+        }
+      ],
+      "name": "victim-preempted",
+      "workloads": [
+        {
+          "admission": {
+            "clusterQueue": "elastic-accounting-cq",
+            "podSetAssignments": [
+              {
+                "count": 2,
+                "flavors": {
+                  "cpu": "elastic-accounting-flavor"
+                },
+                "name": "workers",
+                "resourceUsage": {
+                  "cpu": "2"
+                },
+                "topologyAssignment": {
+                  "domains": [
+                    {
+                      "count": 2,
+                      "values": [
+                        "elastic-accounting-node"
+                      ]
+                    }
+                  ],
+                  "levels": [
+                    "kubernetes.io/hostname"
+                  ]
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue elastic-accounting-cq",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "original",
+          "namespace": "pr-evidence",
+          "priority": 10,
+          "queueName": "queue"
+        },
+        {
+          "admission": null,
+          "conditions": [
+            {
+              "message": "The workload has no reservation",
+              "reason": "NoReservation",
+              "status": "False",
+              "type": "Admitted"
+            },
+            {
+              "message": "couldn't assign flavors to pod set workers: topology \"elastic-accounting-topology\" doesn't allow to fit any of 2 pod(s). Total nodes: 1; excluded: resource \"cpu\": 1. Pending the preemption of 1 workload(s)",
+              "reason": "WaitingForPreemptedWorkloads",
+              "status": "False",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "replacement",
+          "namespace": "pr-evidence",
+          "priority": 10,
+          "queueName": "queue"
+        },
+        {
+          "admission": {
+            "clusterQueue": "elastic-accounting-cq",
+            "podSetAssignments": [
+              {
+                "count": 2,
+                "flavors": {
+                  "cpu": "elastic-accounting-flavor"
+                },
+                "name": "workers",
+                "resourceUsage": {
+                  "cpu": "2"
+                },
+                "topologyAssignment": {
+                  "domains": [
+                    {
+                      "count": 2,
+                      "values": [
+                        "elastic-accounting-node"
+                      ]
+                    }
+                  ],
+                  "levels": [
+                    "kubernetes.io/hostname"
+                  ]
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Preempted to accommodate a workload (UID: <uid>, JobUID: UNKNOWN) due to prioritization in the ClusterQueue; preemptor path: /elastic-accounting-cq; preemptee path: /elastic-accounting-cq",
+              "reason": "Preempted",
+              "status": "True",
+              "type": "Evicted"
+            },
+            {
+              "message": "Preempted to accommodate a workload (UID: <uid>, JobUID: UNKNOWN) due to prioritization in the ClusterQueue; preemptor path: /elastic-accounting-cq; preemptee path: /elastic-accounting-cq",
+              "reason": "InClusterQueue",
+              "status": "True",
+              "type": "Preempted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue elastic-accounting-cq",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "victim",
+          "namespace": "pr-evidence",
+          "priority": 1,
+          "queueName": "queue"
+        }
+      ]
+    },
+    {
+      "assertion": "Workload pr-evidence/victim is evicted; Workload pr-evidence/replacement Admitted=True; Workload pr-evidence/original Finished=True",
+      "clusterQueues": [
+        {
+          "admittedWorkloads": 2,
+          "flavorsUsage": [
+            {
+              "name": "elastic-accounting-flavor",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "4"
+                }
+              ]
+            }
+          ],
+          "name": "elastic-accounting-cq",
+          "pendingWorkloads": 1,
+          "reservingWorkloads": 2
+        }
+      ],
+      "events": [
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "replacement",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue elastic-accounting-cq, wait time since queued was <duration>",
+          "order": 8,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "replacement",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue elastic-accounting-cq, wait time since reservation was <duration>",
+          "order": 9,
+          "reason": "Admitted",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "original",
+            "namespace": "pr-evidence"
+          },
+          "message": "Replaced to accommodate a workload (UID: <uid>, JobUID: ) due to workload slice aggregation",
+          "order": 10,
+          "reason": "WorkloadSliceReplaced",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "victim",
+            "namespace": "pr-evidence"
+          },
+          "message": "couldn't assign flavors to pod set workers: topology \"elastic-accounting-topology\" doesn't allow to fit any of 2 pod(s). Total nodes: 1; excluded: resource \"cpu\": 1",
+          "order": 11,
+          "reason": "WaitingForQuota",
+          "type": "Warning"
+        }
+      ],
+      "index": 3,
+      "localQueues": [
+        {
+          "admittedWorkloads": 2,
+          "clusterQueue": "elastic-accounting-cq",
+          "name": "queue",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 1,
+          "reservingWorkloads": 2
+        }
+      ],
+      "name": "replacement-admitted",
+      "workloads": [
+        {
+          "admission": {
+            "clusterQueue": "elastic-accounting-cq",
+            "podSetAssignments": [
+              {
+                "count": 2,
+                "flavors": {
+                  "cpu": "elastic-accounting-flavor"
+                },
+                "name": "workers",
+                "resourceUsage": {
+                  "cpu": "2"
+                },
+                "topologyAssignment": {
+                  "domains": [
+                    {
+                      "count": 2,
+                      "values": [
+                        "elastic-accounting-node"
+                      ]
+                    }
+                  ],
+                  "levels": [
+                    "kubernetes.io/hostname"
+                  ]
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Replaced to accommodate a workload (UID: <uid>, JobUID: ) due to workload slice aggregation",
+              "reason": "WorkloadSliceReplaced",
+              "status": "True",
+              "type": "Finished"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue elastic-accounting-cq",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "original",
+          "namespace": "pr-evidence",
+          "priority": 10,
+          "queueName": "queue"
+        },
+        {
+          "admission": {
+            "clusterQueue": "elastic-accounting-cq",
+            "podSetAssignments": [
+              {
+                "count": 4,
+                "flavors": {
+                  "cpu": "elastic-accounting-flavor"
+                },
+                "name": "workers",
+                "resourceUsage": {
+                  "cpu": "4"
+                },
+                "topologyAssignment": {
+                  "domains": [
+                    {
+                      "count": 4,
+                      "values": [
+                        "elastic-accounting-node"
+                      ]
+                    }
+                  ],
+                  "levels": [
+                    "kubernetes.io/hostname"
+                  ]
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue elastic-accounting-cq",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "replacement",
+          "namespace": "pr-evidence",
+          "priority": 10,
+          "queueName": "queue"
+        },
+        {
+          "admission": null,
+          "conditions": [
+            {
+              "message": "The workload has no reservation",
+              "reason": "NoReservation",
+              "status": "False",
+              "type": "Admitted"
+            },
+            {
+              "message": "Preempted to accommodate a workload (UID: <uid>, JobUID: UNKNOWN) due to prioritization in the ClusterQueue; preemptor path: /elastic-accounting-cq; preemptee path: /elastic-accounting-cq",
+              "reason": "Preempted",
+              "status": "True",
+              "type": "Evicted"
+            },
+            {
+              "message": "Preempted to accommodate a workload (UID: <uid>, JobUID: UNKNOWN) due to prioritization in the ClusterQueue; preemptor path: /elastic-accounting-cq; preemptee path: /elastic-accounting-cq",
+              "reason": "InClusterQueue",
+              "status": "True",
+              "type": "Preempted"
+            },
+            {
+              "message": "couldn't assign flavors to pod set workers: topology \"elastic-accounting-topology\" doesn't allow to fit any of 2 pod(s). Total nodes: 1; excluded: resource \"cpu\": 1",
+              "reason": "WaitingForQuota",
+              "status": "False",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "victim",
+          "namespace": "pr-evidence",
+          "priority": 1,
+          "queueName": "queue"
+        }
+      ]
+    }
+  ],
+  "run": {
+    "baseSha": "5012390842fffd10f17954dd8c49e49a1631ea19",
+    "featureGates": {
+      "ElasticJobsViaWorkloadSlices": true,
+      "ElasticJobsViaWorkloadSlicesWithTAS": true,
+      "TopologyAwareScheduling": true
+    },
+    "headSha": "4a52ef7a1224285fb698548293e7f5753d7a64a5",
+    "k8sVersion": "1.37.0",
+    "producer": "kueue-pr-evidence-state-diff",
+    "runner": "envtest",
+    "scenario": "tas-elastic-replacement-preempt",
+    "sha": "4a52ef7a1224285fb698548293e7f5753d7a64a5",
+    "side": "head",
+    "test": "test/integration/singlecluster/tas/elastic_accounting_test.go: should preempt a lower-priority workload to grow a slice to fill a four-CPU node"
+  },
+  "schemaVersion": "pr-evidence.capture/v1"
+}

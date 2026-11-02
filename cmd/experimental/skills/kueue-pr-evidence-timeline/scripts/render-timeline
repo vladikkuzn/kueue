@@ -1,0 +1,991 @@
+#!/usr/bin/env python3
+
+# Copyright 2026 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Render a base-vs-head scheduling decision timeline from pr-evidence captures.
+
+Consumes pr-evidence.capture/v1 documents written by kueue-pr-evidence-state-diff
+(schema: ../../kueue-pr-evidence-common/capture-schema.md). It never runs
+scenarios and never touches a PR: the output file is the --file content for
+kueue-pr-evidence-common/scripts/inject-pr-notes. Python 3 stdlib only.
+
+    render-timeline --capture-dir DIR [--out FILE]
+    render-timeline --base-capture B.json --head-capture H.json [...] [--out FILE]
+    render-timeline --print-shas [...]      # MERGE_BASE=… HEAD_SHA=… from the captures
+
+Ordering uses only checkpoint order (aligned by name) and the monotonic event
+`order`; there are no timestamps in a capture. Exit codes: 0 rendered or
+skipped (nothing to show; one line on stdout, --out removed), 2 bad input.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import shlex
+import sys
+from dataclasses import dataclass, field
+
+SCHEMA_VERSION = "pr-evidence.capture/v1"
+PRODUCER = "kueue-pr-evidence-state-diff"
+SKILL = "kueue-pr-evidence-timeline"
+DEFAULT_MAX_VISIBLE_LINES = 25  # inject-pr-notes budget, header line included
+
+# kueue pkg/scheduler/preemption/preemption.go HumanReadablePreemptionReasons,
+# inverted so event/condition messages map back to the verbatim reason constants.
+PREEMPTION_REASONS = {
+    "prioritization in the ClusterQueue": "InClusterQueue",
+    "reclamation within the cohort": "InCohortReclamation",
+    "Fair Sharing within the cohort": "InCohortFairSharing",
+    "reclamation within the cohort while borrowing": "InCohortReclaimWhileBorrowing",
+    "the configured preemption rules": "ConfigurablePreemption",
+}
+KNOWN_REASON_CONSTANTS = set(PREEMPTION_REASONS.values())
+
+# Message shapes, same parsing as upstream cmd/experimental/skills/kueue-who-preempted.
+DUE_TO_RE = re.compile(r"\bdue to (.+?)(?:;|$)")
+PATHS_RE = re.compile(r"preemptor path: ([^;]+); preemptee path: ([^;]+)")
+PRIO_RE = re.compile(
+    r"preemptor effective priority: (-?\d+) \(base: (-?\d+), boost: (-?\d+)\); "
+    r"preemptee effective priority: (-?\d+) \(base: (-?\d+), boost: (-?\d+)\)")
+PREEMPTED_WL_RE = re.compile(r"^Preempted workload ([^/\s]+)/(\S+) ")
+CQ_RESERVED_RE = re.compile(r"in ClusterQueue ([^,\s]+)")
+CQ_ADMITTED_RE = re.compile(r"by ClusterQueue ([^,\s]+)")
+NO_QUOTA_RE = re.compile(r"insufficient (?:unused )?quota for (\S+) in flavor")
+TAS_NOFIT_RE = re.compile(r"doesn't allow to fit any of (\d+) pod")
+TAS_EXCL_RE = re.compile(r"excluded: ([^.;]+?)\s*(?:$|\.\s)")
+EVICTED_DUE_RE = re.compile(r"^EvictedDueTo(\w+)$")
+# Scheduler "couldn't schedule" event reasons: older trees emit Pending; newer ones
+# WaitingForQuota / WaitingForPreemptedWorkloads (observed in real state-diff captures).
+PENDING_REASONS = ("Pending", "SecondPassFailed", "WaitingForQuota", "WaitingForPreemptedWorkloads")
+
+DECISION_KINDS = ("pending", "preempt", "evict", "requeue", "reserve", "admit", "place", "finish")
+
+
+class InputError(Exception):
+    """Malformed or inconsistent capture input; exit 2."""
+
+
+# --------------------------------------------------------------------------- model
+
+
+@dataclass
+class Decision:
+    kind: str                 # one of DECISION_KINDS or "other"
+    wl: str                   # subject workload "ns/name" (victim for preempt)
+    order: float              # event order; state-derived decisions get fractional slots
+    source: str = "event"     # "event" | "state"
+    peer: str = ""            # preemptor for preempt
+    peer_inferred: str = ""   # how the preemptor was inferred ("" when explicit)
+    reason: str = ""          # verbatim reason constant / event reason
+    detail: str = ""          # cq, placement, short pending cause …
+    prio: str = ""            # "1000 > 100" for preempt
+    paths: str = ""           # "preemptorPath → preempteePath"
+    count: int = 1
+    note: str = ""            # free text for the text timeline only
+    orders: list = field(default_factory=list)  # all event orders folded into this decision
+
+    def key(self) -> tuple:
+        return (self.kind, self.wl, self.peer, self.reason, self.detail, self.prio, self.count)
+
+
+@dataclass
+class Side:
+    doc: dict
+    checkpoints: dict          # name -> checkpoint
+    names: list                # checkpoint names in index order
+    decisions: dict            # name -> [Decision]
+    workloads: dict            # name -> {wl: workload}
+
+
+@dataclass
+class Scenario:
+    name: str
+    base: Side
+    head: Side
+    names: list                # aligned checkpoint names
+    ns_single: bool = True
+
+
+# --------------------------------------------------------------------------- loading
+
+
+def load_capture(path: str, side: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise InputError(f"{path}: {exc}") from exc
+    if doc.get("schemaVersion") != SCHEMA_VERSION:
+        raise InputError(f"{path}: schemaVersion {doc.get('schemaVersion')!r} != {SCHEMA_VERSION}")
+    run = doc.get("run") or {}
+    if run.get("side") != side:
+        raise InputError(f"{path}: run.side is {run.get('side')!r}, expected {side!r}")
+    if run.get("producer") != PRODUCER:
+        raise InputError(f"{path}: run.producer {run.get('producer')!r}; the {side} side must be "
+                         f"generated by {PRODUCER}, never hand-written")
+    want = run.get("baseSha") if side == "base" else run.get("headSha")
+    if not want or run.get("sha") != want:
+        raise InputError(f"{path}: run.sha {run.get('sha')!r} != run.{side}Sha {want!r}")
+    cps = doc.get("checkpoints")
+    if not isinstance(cps, list):
+        raise InputError(f"{path}: checkpoints must be a list")
+    seen = set()
+    for i, cp in enumerate(sorted(cps, key=lambda c: c.get("index", 0))):
+        if cp.get("index") != i:
+            raise InputError(f"{path}: checkpoint indexes must be contiguous from 0")
+        if not cp.get("name") or cp["name"] in seen:
+            raise InputError(f"{path}: checkpoint {i} needs a unique name")
+        seen.add(cp["name"])
+    return doc
+
+
+def check_pair(base: dict, head: dict, bpath: str, hpath: str) -> None:
+    br, hr = base["run"], head["run"]
+    if br.get("scenario") != hr.get("scenario"):
+        raise InputError(f"scenario mismatch: {bpath} {br.get('scenario')!r} vs {hpath} {hr.get('scenario')!r}")
+    for k in ("baseSha", "headSha"):
+        if br.get(k) != hr.get(k):
+            raise InputError(f"run.{k} differs between {bpath} and {hpath}")
+
+
+def discover(capture_dir: str) -> list[tuple[str, str]]:
+    pairs = []
+    if not os.path.isdir(capture_dir):
+        raise InputError(f"capture dir {capture_dir} not found (run kueue-pr-evidence-state-diff first)")
+    for root, dirs, files in os.walk(capture_dir):
+        dirs.sort()
+        if os.path.relpath(root, capture_dir).count(os.sep) >= 2:
+            dirs[:] = []
+        for f in sorted(files):
+            if f == "capture.base.json" or f.endswith(".capture.base.json"):
+                b = os.path.join(root, f)
+                h = os.path.join(root, f[: -len("base.json")] + "head.json")
+                if not os.path.isfile(h):
+                    raise InputError(f"{b}: missing head capture {h}")
+                pairs.append((b, h))
+    if not pairs:
+        raise InputError(f"no capture.base.json / capture.head.json pairs under {capture_dir}")
+    return pairs
+
+
+# --------------------------------------------------------------------------- extraction
+
+
+def wl_key(obj: dict) -> str:
+    return f"{obj.get('namespace', '')}/{obj.get('name', '')}"
+
+
+def cond(wl: dict | None, ctype: str) -> dict | None:
+    for c in (wl or {}).get("conditions") or []:
+        if c.get("type") == ctype:
+            return c
+    return None
+
+
+def is_true(wl: dict | None, ctype: str) -> bool:
+    c = cond(wl, ctype)
+    return bool(c) and c.get("status") == "True"
+
+
+def preemption_reason(message: str, victim: dict | None) -> str:
+    m = DUE_TO_RE.search(message or "")
+    if m and m.group(1).strip() in PREEMPTION_REASONS:
+        return PREEMPTION_REASONS[m.group(1).strip()]
+    c = cond(victim, "Preempted")
+    if c and c.get("reason") in KNOWN_REASON_CONSTANTS:
+        return c["reason"]
+    return "UNKNOWN"
+
+
+def prio_text(message: str, preemptor: dict | None, victim: dict | None) -> str:
+    m = PRIO_RE.search(message or "")
+    if m:
+        p, v = m.group(1), m.group(4)
+        boost = [b for b in (m.group(3), m.group(6)) if b != "0"]
+        txt = f"{p} > {v}" if int(p) > int(v) else f"{p} vs {v}"
+        return txt + (" (boosted)" if boost else "")
+    pp = (preemptor or {}).get("priority")
+    vp = (victim or {}).get("priority")
+    if pp is None or vp is None:
+        return ""
+    return f"{pp} > {vp}" if pp > vp else f"{pp} vs {vp}"
+
+
+def pending_detail(message: str) -> str:
+    parts = []
+    m = NO_QUOTA_RE.search(message or "")
+    if m:
+        parts.append(f"no quota: {m.group(1)}")
+    m = TAS_NOFIT_RE.search(message or "")
+    if m:
+        excl = TAS_EXCL_RE.search(message or "")
+        parts.append(f"TAS: no fit for {m.group(1)} pods"
+                     + (f" (excluded {excl.group(1).replace(chr(34), '').strip()})" if excl else ""))
+    if "Pending the preemption" in (message or ""):
+        parts.append("awaits preemption")
+    if not parts:
+        short = (message or "").split(":")[0].strip()
+        parts.append(short[:48])
+    return ", ".join(parts)
+
+
+def placement(wl: dict | None) -> dict:
+    """{podset: ((levels...), {domain-tuple: count})} for admitted TAS podsets."""
+    out = {}
+    adm = (wl or {}).get("admission") or {}
+    for psa in adm.get("podSetAssignments") or []:
+        ta = psa.get("topologyAssignment")
+        if not ta:
+            continue
+        doms = {}
+        for d in ta.get("domains") or []:
+            doms[tuple(d.get("values") or [])] = doms.get(tuple(d.get("values") or []), 0) + int(d.get("count", 0))
+        out[psa.get("name", "")] = (tuple(ta.get("levels") or []), doms)
+    return out
+
+
+def dom_label(values: tuple) -> str:
+    return "/".join(values) or "?"
+
+
+def placement_move(before: dict, after: dict) -> str:
+    moves = []
+    for ps in sorted(set(before) | set(after)):
+        b = before.get(ps, ((), {}))[1]
+        a = after.get(ps, ((), {}))[1]
+        if a == b:
+            continue
+
+        def fmt(doms: dict, other: dict) -> str:
+            items = []
+            for d in sorted(doms):
+                n = doms[d] - other.get(d, 0)
+                if n > 0:
+                    items.append(dom_label(d) + (f"×{n}" if n > 1 else ""))
+            return "+".join(items) or "∅"
+
+        moves.append(f"{ps} {fmt(b, a)}→{fmt(a, b)}")
+    return ", ".join(moves)
+
+
+def extract(doc: dict) -> Side:
+    cps = sorted(doc["checkpoints"], key=lambda c: c["index"])
+    side = Side(doc=doc, checkpoints={c["name"]: c for c in cps}, names=[c["name"] for c in cps],
+                decisions={}, workloads={})
+    prev_wls: dict = {}
+    open_ev: dict = {}       # wl -> last preempt/evict Decision not yet followed by readmission
+    requeued: set = set()    # wls whose open eviction already has a requeue decision
+    last_order = -1.0
+    for cp in cps:
+        wls = {wl_key(w): w for w in cp.get("workloads") or []}
+        side.workloads[cp["name"]] = wls
+        events = sorted((e for e in cp.get("events") or []
+                         if (e.get("involvedObject") or {}).get("kind", "Workload") == "Workload"),
+                        key=lambda e: e.get("order", 0))
+        decs: list[Decision] = []
+        by_victim: dict = {}           # victim -> preempt Decision (latest)
+        pw_events = []                 # (order, preemptor, victim, message)
+        for e in events:
+            o = float(e.get("order", 0))
+            last_order = max(last_order, o)
+            who = wl_key(e.get("involvedObject") or {})
+            reason = e.get("reason", "")
+            msg = e.get("message", "")
+            cnt = max(1, int(e.get("count", 1) or 1))  # optional; not in capture v1 (gap)
+            ev = EVICTED_DUE_RE.match(reason)
+            if reason == "QuotaReserved":
+                m = CQ_RESERVED_RE.search(msg)
+                decs.append(Decision("reserve", who, o, detail=m.group(1) if m else "", orders=[o]))
+            elif reason == "Admitted":
+                m = CQ_ADMITTED_RE.search(msg)
+                decs.append(Decision("admit", who, o, detail=m.group(1) if m else "", orders=[o]))
+            elif reason == "Preempted" or (ev and ev.group(1) == "Preempted"):
+                # Preempted (victim event) and EvictedDueToPreempted fold into one
+                # decision; a repeat of either inside the checkpoint starts a new one.
+                tag = "preempted-event" if reason == "Preempted" else "evicted"
+                d = by_victim.get(who)
+                if d is None or tag in d.note.split():
+                    d = Decision("preempt", who, o, reason=preemption_reason(msg, wls.get(who)),
+                                 count=cnt, orders=[])
+                    decs.append(d)
+                    by_victim[who] = d
+                d.orders.append(o)
+                if reason == "Preempted":
+                    d.note = (d.note + " preempted-event").strip()
+                    d.count = max(d.count, cnt)
+                    if d.reason == "UNKNOWN":
+                        d.reason = preemption_reason(msg, wls.get(who))
+                else:
+                    d.note = (d.note + " evicted").strip()
+                m = PATHS_RE.search(msg)
+                if m and not d.paths:
+                    d.paths = f"{m.group(1).strip()} → {m.group(2).strip()}"
+                if not d.prio and PRIO_RE.search(msg):
+                    d.prio = prio_text(msg, None, None)
+            elif reason == "PreemptedWorkload":
+                m = PREEMPTED_WL_RE.search(msg)
+                if m:
+                    pw_events.append((o, who, f"{m.group(1)}/{m.group(2)}", msg))
+            elif ev:
+                decs.append(Decision("evict", who, o, reason=ev.group(1), count=cnt, orders=[o]))
+            elif reason in PENDING_REASONS or msg.startswith("couldn't assign flavors"):
+                detail = pending_detail(msg)
+                if reason == "WaitingForPreemptedWorkloads" and "awaits preemption" not in detail:
+                    detail += ", awaits preemption"
+                d = Decision("pending", who, o, reason=reason, detail=detail, orders=[o])
+                if decs and decs[-1].kind == "pending" and decs[-1].wl == who:
+                    decs[-1].orders.append(o)
+                else:
+                    decs.append(d)
+            elif reason == "Finished":
+                decs.append(Decision("finish", who, o, orders=[o]))
+            elif reason == "WorkloadSliceReplaced":   # elastic slice superseded (Finished)
+                decs.append(Decision("finish", who, o, detail="slice replaced", orders=[o]))
+            else:
+                decs.append(Decision("other", who, o, reason=reason, detail=msg[:80], orders=[o]))
+
+        # Preemptor identity: PreemptedWorkload event (explicit) else inference.
+        for o, preemptor, victim, msg in pw_events:
+            d = by_victim.get(victim)
+            if d is None:
+                d = Decision("preempt", victim, o, reason=preemption_reason("", wls.get(victim)), orders=[o])
+                decs.append(d)
+                by_victim[victim] = d
+            d.peer = preemptor
+            if not d.prio and PRIO_RE.search(msg):
+                d.prio = prio_text(msg, None, None)
+        for d in decs:
+            if d.kind != "preempt" or d.peer:
+                continue
+            first = min(d.orders) if d.orders else d.order
+            cands = [x for x in decs if x.kind == "pending" and x.wl != d.wl and x.order < first
+                     and "awaits preemption" in x.detail]
+            if cands:
+                d.peer, d.peer_inferred = cands[-1].wl, "pending event awaiting preemption"
+            else:
+                nxt = [x for x in decs if x.kind in ("reserve", "admit") and x.wl != d.wl and x.order > first]
+                if nxt:
+                    d.peer, d.peer_inferred = nxt[0].wl, "next quota reservation"
+                else:
+                    d.peer, d.peer_inferred = "?", "no PreemptedWorkload event"
+        for d in decs:
+            if d.kind == "preempt":
+                if not d.prio:
+                    d.prio = prio_text("", wls.get(d.peer) or prev_wls.get(d.peer), wls.get(d.wl))
+                if d.reason == "UNKNOWN":
+                    d.reason = preemption_reason("", wls.get(d.wl))
+
+        # State-derived decisions (no event in this checkpoint explains the change).
+        slot = [last_order]
+
+        def next_slot() -> float:
+            slot[0] += 0.001
+            return slot[0] + 0.5
+
+        def has(kind_set, w):
+            return any(x.kind in kind_set and x.wl == w for x in decs)
+
+        def before_own(w) -> float:
+            own = [x.order for x in decs if x.wl == w and x.kind in ("pending", "reserve", "admit")]
+            return (min(own) - 0.01) if own else next_slot()
+
+        for w in sorted(wls):
+            now, before = wls[w], prev_wls.get(w)
+            adm_now, adm_before = now.get("admission"), (before or {}).get("admission")
+            if adm_now and not adm_before and not has({"reserve", "admit"}, w):
+                decs.append(Decision("admit", w, next_slot(), "state", detail=adm_now.get("clusterQueue", "")))
+            elif adm_now and adm_before and not has({"reserve", "admit", "preempt", "evict"}, w):
+                move = placement_move(placement(before), placement(now))
+                if move:
+                    decs.append(Decision("place", w, next_slot(), "state", reason="TAS", detail=move))
+            if adm_before and not adm_now and not has({"preempt", "evict"}, w):
+                ec = cond(now, "Evicted")
+                if w in open_ev:
+                    # Already evicted in an earlier checkpoint (the job side released it,
+                    # e.g. finishEviction): this is the requeue, not a second eviction.
+                    if w not in requeued and not is_true(now, "Finished") and \
+                            (cond(now, "Requeued") or {}).get("status") != "False":
+                        decs.append(Decision("requeue", w, before_own(w), "state",
+                                             reason=(ec or {}).get("reason", "") or open_ev[w].reason,
+                                             note="released after eviction"))
+                        requeued.add(w)
+                elif ec and ec.get("status") == "True" and ec.get("reason") == "Preempted":
+                    decs.append(Decision("preempt", w, next_slot(), "state", peer="?",
+                                         peer_inferred="state only",
+                                         reason=preemption_reason(ec.get("message", ""), now)))
+                else:
+                    decs.append(Decision("evict", w, next_slot(), "state",
+                                         reason=(ec or {}).get("reason", "") if ec and ec.get("status") == "True"
+                                         else "Unadmitted"))
+            if is_true(now, "Finished") and not is_true(before, "Finished") and not has({"finish"}, w):
+                decs.append(Decision("finish", w, next_slot(), "state"))
+
+        # Requeue: requeueState.count delta (WaitForPodsReady backoff), or the Requeued
+        # condition after an eviction in this checkpoint, or Requeued False -> True.
+        for w in sorted(wls):
+            now, before = wls[w], prev_wls.get(w)
+            rq_now = ((now.get("requeueState") or {}).get("count")) or 0
+            rq_before = (((before or {}).get("requeueState") or {}).get("count")) or 0
+            evs = [x for x in decs if x.wl == w and x.kind in ("preempt", "evict")]
+            if not evs and w in open_ev and w not in requeued:
+                evs = [open_ev[w]]          # evicted in an earlier checkpoint
+            rc = cond(now, "Requeued")
+            readmitted = evs and any(x.wl == w and x.kind in ("reserve", "admit") and x.order > evs[-1].order
+                                     for x in decs)
+            n, why = 0, ""
+            if rq_now > rq_before:
+                n, why = rq_now - rq_before, "requeueState"
+            elif evs and w not in requeued and (is_true(now, "Requeued") or readmitted):
+                n, why = 1, "Requeued condition" if is_true(now, "Requeued") else "re-admitted"
+            elif is_true(now, "Requeued") and cond(before, "Requeued") and not is_true(before, "Requeued") \
+                    and w not in requeued:
+                n, why = 1, "Requeued condition"
+            if n:
+                own = [x for x in evs if x in decs]
+                # Evicted in this checkpoint: right after the eviction. Evicted earlier:
+                # before this checkpoint's pending/reserve/admit of the same workload.
+                at = (max(own[-1].orders or [own[-1].order]) + 0.1) if own else before_own(w)
+                decs.append(Decision("requeue", w, at, "state", reason=(rc or {}).get("reason", ""),
+                                     count=n, note=why))
+                requeued.add(w)
+        # Track evictions across checkpoints: open until the workload is admitted again.
+        for d in sorted(decs, key=lambda x: x.order):
+            if d.kind in ("preempt", "evict"):
+                open_ev[d.wl] = d
+                requeued.discard(d.wl)
+                for r in decs:
+                    if r.kind == "requeue" and r.wl == d.wl and r.order > d.order:
+                        requeued.add(d.wl)
+            elif d.kind in ("reserve", "admit") and d.wl in open_ev and d.order > open_ev[d.wl].order:
+                del open_ev[d.wl]
+                requeued.discard(d.wl)
+        decs.sort(key=lambda x: (x.order, DECISION_KINDS.index(x.kind) if x.kind in DECISION_KINDS else 99))
+        side.decisions[cp["name"]] = decs
+        prev_wls = wls
+    return side
+
+
+def build_scenario(bpath: str, hpath: str) -> Scenario:
+    base_doc = load_capture(bpath, "base")
+    head_doc = load_capture(hpath, "head")
+    check_pair(base_doc, head_doc, bpath, hpath)
+    base, head = extract(base_doc), extract(head_doc)
+    names = list(base.names) + [n for n in head.names if n not in base.names]
+    nss = set()
+    for s in (base, head):
+        for cp in s.checkpoints.values():
+            nss |= {w.get("namespace") for w in cp.get("workloads") or []}
+            nss |= {(e.get("involvedObject") or {}).get("namespace") for e in cp.get("events") or []}
+    return Scenario(base_doc["run"].get("scenario", "?"), base, head, names, ns_single=len(nss - {None}) <= 1)
+
+
+# --------------------------------------------------------------------------- analysis
+
+
+def visible(decs: list[Decision]) -> list[Decision]:
+    return [d for d in decs if d.kind in DECISION_KINDS]
+
+
+def keys(side: Side, name: str):
+    if name not in side.decisions:
+        return None
+    return [d.key() for d in visible(side.decisions[name])]
+
+
+def has_decisions(sc: Scenario) -> bool:
+    return any(visible(s.decisions[n]) for s in (sc.base, sc.head) for n in s.names)
+
+
+def totals(side: Side) -> dict:
+    t = {k: 0 for k in DECISION_KINDS}
+    for n in side.names:
+        for d in visible(side.decisions[n]):
+            t[d.kind] += d.count
+    return t
+
+
+def final_placements(side: Side) -> dict:
+    """{(wl, podset): (levels, domains)} live at the side's last checkpoint.
+
+    Finished workloads (e.g. a replaced elastic slice) and workloads whose
+    admission was released are not on the map; their earlier placements appear
+    as decisions in the timeline.
+    """
+    out = {}
+    if not side.names:
+        return out
+    for w, wl in side.workloads[side.names[-1]].items():
+        if is_true(wl, "Finished"):
+            continue
+        for ps, val in placement(wl).items():
+            out[(w, ps)] = val
+    return out
+
+
+def loops(sc: Scenario, side: Side, label: str) -> list[str]:
+    notes = []
+    for n in side.names:
+        decs = side.decisions[n]
+        wls = side.workloads[n]
+        for d in decs:
+            if d.kind != "preempt" or d.peer in ("", "?"):
+                continue
+            readm = any(x.kind == "admit" and x.wl == d.wl and x.order > d.order for x in decs)
+            if readm and not (wls.get(d.peer) or {}).get("admission"):
+                notes.append(f"{label} `{n}`: {short(sc, d.wl)} re-admitted after preemption by "
+                             f"{short(sc, d.peer)}, which stays pending (likely preemption loop)")
+    return notes
+
+
+# --------------------------------------------------------------------------- rendering
+
+
+def short(sc: Scenario, w: str) -> str:
+    return w.split("/", 1)[1] if sc.ns_single and "/" in w else w
+
+
+def cell_text(sc: Scenario, decs: list[Decision]) -> str:
+    out = []
+    vis = visible(decs)
+    i = 0
+    while i < len(vis):
+        d = vis[i]
+        nxt = vis[i + 1] if i + 1 < len(vis) else None
+        w = short(sc, d.wl)
+        x = f" ×{d.count}" if d.count > 1 else ""
+        if d.kind == "reserve" and nxt and nxt.kind == "admit" and nxt.wl == d.wl:
+            out.append(f"admit {w}")
+            i += 2
+            continue
+        if d.kind == "preempt":
+            peer = short(sc, d.peer) + ("?" if d.peer_inferred and d.peer != "?" else "")
+            out.append(f"preempt {peer}→{w} ({d.reason}){x}")
+        elif d.kind == "evict":
+            out.append(f"evict {w} ({d.reason}){x}")
+        elif d.kind == "place":
+            out.append(f"re-place {w}: {d.detail}")
+        else:
+            out.append(f"{d.kind} {w}{x}")
+        i += 1
+    return " · ".join(out) or "—"
+
+
+def md_escape(s: str) -> str:
+    return s.replace("|", "\\|")
+
+
+def verdict(sc: Scenario) -> tuple[str, bool]:
+    first = None
+    for n in sc.names:
+        if keys(sc.base, n) != keys(sc.head, n):
+            first = n
+            break
+    tb, th = totals(sc.base), totals(sc.head)
+    pb, ph = final_placements(sc.base), final_placements(sc.head)
+    tas_diff = sorted({f"{short(sc, w)}/{ps}" for (w, ps) in set(pb) | set(ph)
+                       if pb.get((w, ps)) != ph.get((w, ps))})
+    labels = {"preempt": "preemption", "evict": "eviction", "requeue": "requeue", "admit": "admission",
+              "place": "TAS re-placement"}
+    if first is None and not tas_diff:
+        parts = [f"{tb[k]} {labels[k]}{'s' if tb[k] != 1 else ''}"
+                 for k in ("preempt", "evict", "requeue", "admit", "place") if tb[k]]
+        return (f"**Same scheduling decisions** on base and head — {len(sc.names)} checkpoints"
+                + (", " + ", ".join(parts) if parts else "") + "."), False
+    parts = [f"{labels[k]}s {tb[k]} → {th[k]}" for k in ("preempt", "evict", "requeue", "admit", "place")
+             if tb[k] != th[k]]
+    txt = "**Scheduling decisions differ**"
+    if first:
+        txt += f" from `{first}`"
+    if parts:
+        txt += ": " + ", ".join(parts)
+    ended = [(lbl, s) for lbl, s in (("base", sc.base), ("head", sc.head)) if len(s.names) < len(sc.names)]
+    for lbl, s in ended:
+        txt += f"; {lbl} capture ends after `{s.names[-1] if s.names else '∅'}`"
+    if tas_diff:
+        txt += "; TAS placement differs for " + ", ".join(tas_diff)
+    return txt + ".", True
+
+
+def meta_line(sc: Scenario) -> str:
+    br, hr = sc.base.doc["run"], sc.head.doc["run"]
+    runner = br.get("runner", "?")
+    if hr.get("runner") != runner:
+        runner = f"base {runner} / head {hr.get('runner', '?')} (mismatch)"
+    k8s = br.get("k8sVersion", "?")
+    if hr.get("k8sVersion") != k8s:
+        k8s = f"{k8s}/{hr.get('k8sVersion', '?')}"
+    gates = {**(br.get("featureGates") or {}), **(hr.get("featureGates") or {})}
+    gtxt = ", ".join(f"{g}={str(v).lower()}" for g, v in sorted(gates.items()))
+    line = f"Scenario `{sc.name}` · runner **{runner}** (k8s {k8s})"
+    if gtxt:
+        line += f" · gates `{gtxt}`"
+    if br.get("featureGates") != hr.get("featureGates"):
+        line += " (gates differ base/head)"
+    return line + f" · from `{PRODUCER}` captures"
+
+
+def checkpoint_table(sc: Scenario) -> list[str]:
+    rows = ["| # | checkpoint | base | head |", "|---|---|---|---|"]
+    for i, n in enumerate(sc.names):
+        kb, kh = keys(sc.base, n), keys(sc.head, n)
+        b = cell_text(sc, sc.base.decisions[n]) if kb is not None else "— (capture ended)"
+        if kh is None:
+            h = "— (capture ended)"
+        elif kh == kb:
+            h = "same"
+        else:
+            h = cell_text(sc, sc.head.decisions[n])
+        mark = " ≠" if kb != kh else ""
+        rows.append(f"| {i} | `{n}`{mark} | {md_escape(b)} | {md_escape(h)} |")
+    return rows
+
+
+def preemption_table(sc: Scenario) -> list[str]:
+    agg: dict = {}
+    for lbl, s in (("base", sc.base), ("head", sc.head)):
+        for n in s.names:
+            for d in s.decisions[n]:
+                if d.kind != "preempt":
+                    continue
+                k = (d.peer, d.wl, d.reason)
+                row = agg.setdefault(k, {"base": 0, "head": 0, "prio": d.prio, "inferred": set()})
+                row[lbl] += d.count
+                row["prio"] = row["prio"] or d.prio
+                if d.peer_inferred:
+                    row["inferred"].add(lbl)
+    if not agg:
+        return []
+    rows = ["| preemptor → preemptee | reason | priority | base | head |", "|---|---|---|---|---|"]
+    for (peer, victim, reason), r in sorted(agg.items()):
+        p = short(sc, peer) + ("?" if r["inferred"] and peer != "?" else "")
+        rows.append(f"| {md_escape(p)} → {md_escape(short(sc, victim))} | {reason} | {r['prio'] or '—'} | "
+                    f"{r['base']} | {r['head']} |")
+    return rows
+
+
+def tas_table(sc: Scenario) -> list[str]:
+    pb, ph = final_placements(sc.base), final_placements(sc.head)
+    if not pb and not ph:
+        return []
+    levels = {v[0] for v in list(pb.values()) + list(ph.values())}
+    lvl = " › ".join(next(iter(levels))) if len(levels) == 1 else "mixed levels"
+    rows = [f"TAS placement (final, pods per `{lvl}` domain):", "",
+            "| podset | domain | base | head |", "|---|---|---|---|"]
+    for k in sorted(set(pb) | set(ph)):
+        bd = (pb.get(k) or ((), {}))[1]
+        hd = (ph.get(k) or ((), {}))[1]
+        label = f"{short(sc, k[0])}/{k[1]}"
+        for j, dom in enumerate(sorted(set(bd) | set(hd))):
+            b, h = bd.get(dom, 0), hd.get(dom, 0)
+            rows.append(f"| {md_escape(label) if j == 0 else ''} | {md_escape(dom_label(dom))} | "
+                        f"{b or '·'} | {h or '·'}{' ≠' if b != h else ''} |")
+    return rows
+
+
+# Mermaid ------------------------------------------------------------------------
+
+MERMAID_BAD = re.compile(r"[;#{}<>\"`]|%%")
+
+
+def mm(s: str) -> str:
+    return re.sub(r"\s+", " ", MERMAID_BAD.sub("", s).replace(":", " ")).strip()
+
+
+def mermaid(sc: Scenario) -> list[str]:
+    order: list[str] = []
+    prio: dict = {}
+    for s in (sc.base, sc.head):
+        for n in s.names:
+            for d in visible(s.decisions[n]):
+                for w in (d.peer, d.wl):
+                    if w and w != "?" and w not in order:
+                        order.append(w)
+            for w, wl in s.workloads[n].items():
+                if wl.get("priority") is not None:
+                    prio.setdefault(w, wl["priority"])
+    ids = {w: f"W{i}" for i, w in enumerate(order)}
+    last = ids[order[-1]] if order else "K"
+    lines = ["sequenceDiagram", "    participant K as kueue"]
+    for w in order:
+        p = f" p{prio[w]}" if w in prio else ""
+        lines.append(f"    participant {ids[w]} as {mm(short(sc, w))}{p}")
+
+    def steps(decs: list[Decision], ind: str) -> list[str]:
+        out = []
+        vis = visible(decs)
+        i = 0
+        while i < len(vis):
+            d = vis[i]
+            nxt = vis[i + 1] if i + 1 < len(vis) else None
+            t = ids.get(d.wl, "K")
+            x = f" x{d.count}" if d.count > 1 else ""
+            if d.kind == "reserve" and nxt and nxt.kind == "admit" and nxt.wl == d.wl:
+                out.append(f"{ind}K->>{t}: admit {mm(d.detail or nxt.detail)}")
+                i += 2
+                continue
+            if d.kind == "preempt":
+                src = ids.get(d.peer, "K")
+                extra = f" prio {mm(d.prio.replace('>', 'over'))}" if d.prio else ""
+                out.append(f"{ind}{src}-x{t}: preempt {d.reason}{extra}{x}")
+            elif d.kind == "evict":
+                out.append(f"{ind}K-x{t}: evict {mm(d.reason)}{x}")
+            elif d.kind == "requeue":
+                out.append(f"{ind}K-->>{t}: requeue {mm(d.reason)}{x}".rstrip())
+            elif d.kind == "pending":
+                out.append(f"{ind}K--){t}: pending {mm(d.detail)}".rstrip())
+            elif d.kind == "place":
+                out.append(f"{ind}K->>{t}: re-place {mm(d.detail.replace('→', ' to '))}")
+            else:
+                out.append(f"{ind}K->>{t}: {d.kind} {mm(d.detail)}".rstrip())
+            i += 1
+        return out or [f"{ind}Note over K: no decisions"]
+
+    for i, n in enumerate(sc.names):
+        kb, kh = keys(sc.base, n), keys(sc.head, n)
+        tag = "base = head" if kb == kh else "differs"
+        lines.append(f"    Note over K,{last}: {i} {mm(n)} - {tag}")
+        if kb == kh:
+            lines += steps(sc.base.decisions[n], "    ")
+            continue
+        lines.append("    par base")
+        lines += steps(sc.base.decisions[n], "        ") if kb is not None else \
+            ["        Note over K: capture ended"]
+        lines.append("    and head")
+        lines += steps(sc.head.decisions[n], "        ") if kh is not None else \
+            ["        Note over K: capture ended"]
+        lines.append("    end")
+    return lines
+
+
+# Text fallback -----------------------------------------------------------------
+
+
+def text_line(sc: Scenario, d: Decision) -> str:
+    ref = ",".join(f"e{int(o)}" for o in sorted(d.orders)) if d.source == "event" and d.orders else "state"
+    w = short(sc, d.wl)
+    x = f" ×{d.count}" if d.count > 1 else ""
+    if d.kind == "preempt":
+        peer = short(sc, d.peer)
+        s = f"preempt  {peer} → {w}  {d.reason}{x}"
+        if d.prio:
+            s += f"  prio {d.prio}"
+        if d.paths:
+            s += f"  [{d.paths}]"
+        if d.peer_inferred:
+            s += f"  (preemptor inferred: {d.peer_inferred})"
+        if "evicted" in d.note:
+            s += "  +evicted"
+    elif d.kind == "requeue":
+        s = f"requeue  {w}{x}  {d.reason}".rstrip() + (f"  ({d.note})" if d.note else "")
+    elif d.kind == "other":
+        s = f"event    {w}  {d.reason}"
+    else:
+        why = d.reason if d.kind == "evict" else ""
+        s = f"{d.kind:<8} {w}{x}  {why + ' ' if why else ''}{d.detail}".rstrip()
+    return f"{ref:<9} {s}"
+
+
+def text_timeline(sc: Scenario) -> list[str]:
+    run = sc.base.doc["run"]
+    out = [f"scenario {sc.name}  base {run.get('baseSha', '')[:12]}  head {run.get('headSha', '')[:12]}"]
+    if run.get("test"):
+        out.append(f"test     {run['test']}")
+    for i, n in enumerate(sc.names):
+        cp = sc.base.checkpoints.get(n) or sc.head.checkpoints.get(n)
+        out.append(f"[{i}] {n} — {cp.get('assertion', '')}")
+        kb, kh = keys(sc.base, n), keys(sc.head, n)
+        for lbl, s, k in (("base", sc.base, kb), ("head", sc.head, kh)):
+            if k is None:
+                out.append(f"  {lbl}  (capture ended before this checkpoint)")
+                continue
+            if lbl == "head" and kh == kb:
+                out.append("  head  = base")
+                continue
+            lines = [text_line(sc, d) for d in s.decisions[n]] or ["(no decisions)"]
+            out.append(f"  {lbl}  {lines[0]}")
+            out += [f"        {ln}" for ln in lines[1:]]
+    return out
+
+
+# Layout / budget ---------------------------------------------------------------
+
+
+def _load_visible_lines():
+    here = os.path.dirname(os.path.realpath(__file__))
+    inj = os.path.join(here, "..", "..", "kueue-pr-evidence-common", "scripts", "inject-pr-notes")
+    if os.path.isfile(inj):
+        try:
+            loader = importlib.machinery.SourceFileLoader("_inject_pr_notes", inj)
+            spec = importlib.util.spec_from_loader("_inject_pr_notes", loader)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["_inject_pr_notes"] = mod
+            loader.exec_module(mod)
+            return mod.visible_lines
+        except Exception:  # pragma: no cover - fall back to the local copy
+            pass
+
+    def visible_lines(content: str) -> int:  # same rule as inject-pr-notes
+        depth = count = 0
+        for line in content.split("\n"):
+            opens = len(re.findall(r"<details\b", line, re.IGNORECASE))
+            closes = len(re.findall(r"</details\s*>", line, re.IGNORECASE))
+            if depth == 0 and line.strip():
+                count += 1
+            depth = max(0, depth + opens - closes)
+        return count
+    return visible_lines
+
+
+visible_lines = _load_visible_lines()
+
+
+@dataclass
+class Section:
+    body: list
+    summary: str = ""          # empty: never collapsible
+    collapsed: bool = False
+    rank: int = 0              # lower collapses first
+
+    def render(self) -> list[str]:
+        if not self.collapsed:
+            return self.body
+        body = list(self.body)
+        while body and body[0] == "":
+            body.pop(0)
+        return [f"<details><summary>{self.summary}</summary>", ""] + body + ["", "</details>"]
+
+
+def scenario_sections(sc: Scenario, multi: bool) -> list[Section]:
+    v, _ = verdict(sc)
+    secs = [Section([(f"`{sc.name}`: " if multi else "") + v, "", meta_line(sc)])]
+    for note in loops(sc, sc.base, "base") + loops(sc, sc.head, "head"):
+        secs.append(Section(["", f"⚠ {note}"]))
+    secs.append(Section([""] + checkpoint_table(sc), "Checkpoint table", rank=40))
+    pt = preemption_table(sc)
+    if pt:
+        secs.append(Section(["", "Preemptions (preemptor → preemptee; `?` = inferred):", ""] + pt,
+                            "Preemptions", rank=30))
+    tt = tas_table(sc)
+    if tt:
+        secs.append(Section([""] + tt, "TAS placement map", rank=20))
+    secs.append(Section(["", "```mermaid"] + mermaid(sc) + ["```"],
+                        "Mermaid timeline (base vs head)", rank=10))
+    secs.append(Section(["```text"] + text_timeline(sc) + ["```"],
+                        "Text timeline (event order)", collapsed=True, rank=0))
+    return secs
+
+
+def assemble(sections: list[Section]) -> str:
+    lines: list[str] = []
+    for s in sections:
+        body = s.render()
+        if s.collapsed and lines and lines[-1] != "":
+            lines.append("")
+        lines += body
+    return "\n".join(lines).strip("\n") + "\n"
+
+
+def layout(scenarios: list[Scenario], max_visible: int, skipped: list[str]) -> str:
+    multi = len(scenarios) > 1
+    sections: list[Section] = []
+    for i, sc in enumerate(scenarios):
+        for s in scenario_sections(sc, multi):
+            s.rank = s.rank - i if s.summary else s.rank  # later scenarios collapse first
+            sections.append(s)
+        if multi and i < len(scenarios) - 1:
+            sections.append(Section([""]))
+    if skipped:
+        sections.append(Section(["", f"No scheduling decisions in: {', '.join(f'`{s}`' for s in skipped)}."]))
+    budget = max_visible - 1  # the injector adds the header line
+    for s in sorted((s for s in sections if s.summary and not s.collapsed), key=lambda s: s.rank):
+        if visible_lines(assemble(sections)) <= budget:
+            break
+        s.collapsed = True
+    out = assemble(sections)
+    if visible_lines(out) > budget:
+        raise InputError(f"block still has {visible_lines(out) + 1} visible lines > {max_visible}; "
+                         "render fewer scenarios at once")
+    return out
+
+
+# --------------------------------------------------------------------------- CLI
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="render-timeline", description=__doc__.split("\n\n")[0])
+    ap.add_argument("--capture-dir", help="dir with capture.base.json/capture.head.json pairs "
+                    "(also <scenario>/ subdirs and *.capture.{base,head}.json)")
+    ap.add_argument("--base-capture", action="append", default=[], help="base capture JSON (repeatable)")
+    ap.add_argument("--head-capture", action="append", default=[], help="head capture JSON (repeatable)")
+    ap.add_argument("--out", help="write the block here (default stdout); removed when skipping")
+    ap.add_argument("--expect-base", help="fail unless run.baseSha matches (MERGE_BASE)")
+    ap.add_argument("--expect-head", help="fail unless run.headSha matches (HEAD_SHA)")
+    ap.add_argument("--print-shas", action="store_true", help="print MERGE_BASE=/HEAD_SHA= from captures and exit")
+    ap.add_argument("--max-visible-lines", type=int, default=DEFAULT_MAX_VISIBLE_LINES,
+                    help=f"family budget incl. injector header (default {DEFAULT_MAX_VISIBLE_LINES})")
+    args = ap.parse_args(argv)
+
+    try:
+        if len(args.base_capture) != len(args.head_capture):
+            raise InputError("--base-capture and --head-capture must be given in pairs")
+        if args.base_capture and args.capture_dir:
+            raise InputError("use either --capture-dir or --base-capture/--head-capture")
+        if not args.base_capture and not args.capture_dir:
+            raise InputError("give --capture-dir or --base-capture/--head-capture")
+        pairs = list(zip(args.base_capture, args.head_capture)) or discover(args.capture_dir)
+        scenarios = [build_scenario(b, h) for b, h in pairs]
+        shas = {(s.base.doc["run"]["baseSha"], s.base.doc["run"]["headSha"]) for s in scenarios}
+        if len(shas) != 1:
+            raise InputError("captures come from different base/head SHAs; re-run kueue-pr-evidence-state-diff")
+        base_sha, head_sha = next(iter(shas))
+        for want, got, what in ((args.expect_base, base_sha, "baseSha"), (args.expect_head, head_sha, "headSha")):
+            if want and not (got.startswith(want) or want.startswith(got)):
+                raise InputError(f"captures have run.{what} {got[:12]}, expected {want[:12]} (stale captures?)")
+        if args.print_shas:
+            print(f"MERGE_BASE={shlex.quote(base_sha)}\nHEAD_SHA={shlex.quote(head_sha)}")
+            return 0
+        names = [s.name for s in scenarios]
+        if len(set(names)) != len(names):
+            raise InputError("duplicate scenario ids across capture pairs")
+        shown = [s for s in scenarios if has_decisions(s)]
+        skipped = [s.name for s in scenarios if not has_decisions(s)]
+        if not shown:
+            if args.out and os.path.exists(args.out):
+                os.remove(args.out)
+            print(f"{SKILL}: no scheduling decisions in {', '.join(skipped)}; nothing to inject")
+            return 0
+        block = layout(shown, args.max_visible_lines, skipped)
+    except InputError as exc:
+        print(f"{SKILL}: {exc}", file=sys.stderr)
+        return 2
+    if args.out:
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(block)
+        print(f"{SKILL}: wrote {args.out} ({visible_lines(block) + 1} visible lines; "
+              f"runner {', '.join(sorted({s.base.doc['run'].get('runner', '?') for s in shown}))})",
+              file=sys.stderr)
+    else:
+        sys.stdout.write(block)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

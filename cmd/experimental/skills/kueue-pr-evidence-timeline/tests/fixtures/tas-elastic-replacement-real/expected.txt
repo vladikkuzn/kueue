@@ -1,0 +1,90 @@
+**Scheduling decisions differ** from `replacement-created`: preemptions 0 → 1, requeues 0 → 1, admissions 2 → 3; base capture ends after `replacement-created`; TAS placement differs for original/workers, replacement/workers, victim/workers.
+
+Scenario `tas-elastic-replacement-preempt` · runner **envtest** (k8s 1.37.0) · gates `ElasticJobsViaWorkloadSlices=true, ElasticJobsViaWorkloadSlicesWithTAS=true, TopologyAwareScheduling=true` · from `kueue-pr-evidence-state-diff` captures
+
+| # | checkpoint | base | head |
+|---|---|---|---|
+| 0 | `node-full` | admit original · admit victim | same |
+| 1 | `replacement-created` ≠ | pending replacement | preempt replacement→victim (InClusterQueue) · pending replacement |
+| 2 | `victim-preempted` ≠ | — (capture ended) | — |
+| 3 | `replacement-admitted` ≠ | — (capture ended) | admit replacement · finish original · requeue victim · pending victim |
+
+Preemptions (preemptor → preemptee; `?` = inferred):
+
+| preemptor → preemptee | reason | priority | base | head |
+|---|---|---|---|---|
+| replacement → victim | InClusterQueue | 10 > 1 | 0 | 1 |
+
+TAS placement (final, pods per `kubernetes.io/hostname` domain):
+
+| podset | domain | base | head |
+|---|---|---|---|
+| original/workers | elastic-accounting-node | 2 | · ≠ |
+| replacement/workers | elastic-accounting-node | · | 4 ≠ |
+| victim/workers | elastic-accounting-node | 2 | · ≠ |
+
+<details><summary>Mermaid timeline (base vs head)</summary>
+
+```mermaid
+sequenceDiagram
+    participant K as kueue
+    participant W0 as original p10
+    participant W1 as victim p1
+    participant W2 as replacement p10
+    Note over K,W2: 0 node-full - base = head
+    K->>W0: admit elastic-accounting-cq
+    K->>W1: admit elastic-accounting-cq
+    Note over K,W2: 1 replacement-created - differs
+    par base
+        K--)W2: pending TAS no fit for 2 pods (excluded resource cpu 1)
+    and head
+        W2-xW1: preempt InClusterQueue prio 10 over 1
+        K--)W2: pending TAS no fit for 2 pods (excluded resource cpu 1), awaits preemption
+    end
+    Note over K,W2: 2 victim-preempted - differs
+    par base
+        Note over K: capture ended
+    and head
+        Note over K: no decisions
+    end
+    Note over K,W2: 3 replacement-admitted - differs
+    par base
+        Note over K: capture ended
+    and head
+        K->>W2: admit elastic-accounting-cq
+        K->>W0: finish slice replaced
+        K-->>W1: requeue Preempted
+        K--)W1: pending TAS no fit for 2 pods (excluded resource cpu 1)
+    end
+```
+
+</details>
+
+<details><summary>Text timeline (event order)</summary>
+
+```text
+scenario tas-elastic-replacement-preempt  base 5012390842ff  head 4a52ef7a1224
+test     test/integration/singlecluster/tas/elastic_accounting_test.go: should preempt a lower-priority workload to grow a slice to fill a four-CPU node
+[0] node-full — ClusterQueue elastic-accounting-cq Active=True; Workload pr-evidence/original Admitted=True; Workload pr-evidence/victim Admitted=True
+  base  e0        reserve  original  elastic-accounting-cq
+        e1        admit    original  elastic-accounting-cq
+        e2        reserve  victim  elastic-accounting-cq
+        e3        admit    victim  elastic-accounting-cq
+  head  = base
+[1] replacement-created — Workload pr-evidence/replacement QuotaReserved=False
+  base  e4        pending  replacement  TAS: no fit for 2 pods (excluded resource cpu: 1)
+  head  e4,e5     preempt  replacement → victim  InClusterQueue  prio 10 > 1  [/elastic-accounting-cq → /elastic-accounting-cq]  +evicted
+        e7        pending  replacement  TAS: no fit for 2 pods (excluded resource cpu: 1), awaits preemption
+[2] victim-preempted — Workload pr-evidence/victim Evicted=True (Preempted)
+  base  (capture ended before this checkpoint)
+  head  (no decisions)
+[3] replacement-admitted — Workload pr-evidence/victim is evicted; Workload pr-evidence/replacement Admitted=True; Workload pr-evidence/original Finished=True
+  base  (capture ended before this checkpoint)
+  head  e8        reserve  replacement  elastic-accounting-cq
+        e9        admit    replacement  elastic-accounting-cq
+        e10       finish   original  slice replaced
+        state     requeue  victim  Preempted  (released after eviction)
+        e11       pending  victim  TAS: no fit for 2 pods (excluded resource cpu: 1)
+```
+
+</details>

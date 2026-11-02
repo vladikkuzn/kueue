@@ -1,0 +1,45 @@
+{
+  "checkpoints": [
+    {
+      "assertion": "ClusterQueue cq-a is Active",
+      "clusterQueues": [
+        {
+          "admittedWorkloads": 0,
+          "flavorsUsage": [
+            {
+              "name": "default",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "cq-a",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        }
+      ],
+      "events": [],
+      "index": 0,
+      "localQueues": [],
+      "name": "cq-ready",
+      "workloads": []
+    }
+  ],
+  "run": {
+    "baseSha": "1111111111111111111111111111111111111111",
+    "featureGates": {},
+    "headSha": "2222222222222222222222222222222222222222",
+    "k8sVersion": "1.34.1",
+    "producer": "kueue-pr-evidence-state-diff",
+    "runner": "envtest",
+    "scenario": "cq-status-only",
+    "sha": "1111111111111111111111111111111111111111",
+    "side": "base",
+    "test": "test/integration/singlecluster/controller/core/clusterqueue_controller_test.go: should report empty usage"
+  },
+  "schemaVersion": "pr-evidence.capture/v1"
+}

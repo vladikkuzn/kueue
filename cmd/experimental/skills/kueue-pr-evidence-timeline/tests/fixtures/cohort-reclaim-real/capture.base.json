@@ -1,0 +1,939 @@
+{
+  "checkpoints": [
+    {
+      "assertion": "ClusterQueue a Active=True; ClusterQueue a-noisy Active=True; ClusterQueue b Active=True; Workload pr-evidence/wl-b Admitted=True",
+      "clusterQueues": [
+        {
+          "admittedWorkloads": 0,
+          "flavorsUsage": [
+            {
+              "name": "flavor1",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "a",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        },
+        {
+          "admittedWorkloads": 0,
+          "flavorsUsage": [
+            {
+              "name": "flavor2",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "a-noisy",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        },
+        {
+          "admittedWorkloads": 0,
+          "flavorsUsage": [
+            {
+              "name": "flavor1",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            },
+            {
+              "name": "flavor2",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "b",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        }
+      ],
+      "events": [
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "wl-b",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue b, wait time since queued was <duration>; Flavors considered: main: flavor1(Fit;borrow=2)",
+          "order": 0,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "wl-b",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue b, wait time since reservation was <duration>",
+          "order": 1,
+          "reason": "Admitted",
+          "type": "Normal"
+        }
+      ],
+      "index": 0,
+      "localQueues": [
+        {
+          "admittedWorkloads": 0,
+          "clusterQueue": "a",
+          "name": "a",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        },
+        {
+          "admittedWorkloads": 0,
+          "clusterQueue": "a-noisy",
+          "name": "a-noisy",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        },
+        {
+          "admittedWorkloads": 0,
+          "clusterQueue": "b",
+          "name": "b",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        }
+      ],
+      "name": "b-borrows-flavor1",
+      "workloads": [
+        {
+          "admission": {
+            "clusterQueue": "b",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor1"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue b",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "wl-b",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "b"
+        }
+      ]
+    },
+    {
+      "assertion": "Workload pr-evidence/noisy-1 Admitted=True; Workload pr-evidence/noisy-2 Admitted=True; Workload pr-evidence/noisy-3 Admitted=True; Workload pr-evidence/noisy-4 Admitted=True; Workload pr-evidence/noisy-5 Admitted=True; ClusterQueue a-noisy status.admittedWorkloads == 5",
+      "clusterQueues": [
+        {
+          "admittedWorkloads": 0,
+          "flavorsUsage": [
+            {
+              "name": "flavor1",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "a",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        },
+        {
+          "admittedWorkloads": 5,
+          "flavorsUsage": [
+            {
+              "name": "flavor2",
+              "resources": [
+                {
+                  "borrowed": "5",
+                  "name": "cpu",
+                  "total": "5"
+                }
+              ]
+            }
+          ],
+          "name": "a-noisy",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 5
+        },
+        {
+          "admittedWorkloads": 1,
+          "flavorsUsage": [
+            {
+              "name": "flavor1",
+              "resources": [
+                {
+                  "borrowed": "1",
+                  "name": "cpu",
+                  "total": "1"
+                }
+              ]
+            },
+            {
+              "name": "flavor2",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "b",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 1
+        }
+      ],
+      "events": [
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-1",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue a-noisy, wait time since queued was <duration>; Flavors considered: main: flavor2(Fit;borrow=2)",
+          "order": 2,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-1",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue a-noisy, wait time since reservation was <duration>",
+          "order": 3,
+          "reason": "Admitted",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-2",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue a-noisy, wait time since queued was <duration>; Flavors considered: main: flavor2(Fit;borrow=2)",
+          "order": 4,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-2",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue a-noisy, wait time since reservation was <duration>",
+          "order": 5,
+          "reason": "Admitted",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-3",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue a-noisy, wait time since queued was <duration>; Flavors considered: main: flavor2(Fit;borrow=2)",
+          "order": 6,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-3",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue a-noisy, wait time since reservation was <duration>",
+          "order": 7,
+          "reason": "Admitted",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-4",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue a-noisy, wait time since queued was <duration>; Flavors considered: main: flavor2(Fit;borrow=2)",
+          "order": 8,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-4",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue a-noisy, wait time since reservation was <duration>",
+          "order": 9,
+          "reason": "Admitted",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-5",
+            "namespace": "pr-evidence"
+          },
+          "message": "Quota reserved in ClusterQueue a-noisy, wait time since queued was <duration>; Flavors considered: main: flavor2(Fit;borrow=2)",
+          "order": 10,
+          "reason": "QuotaReserved",
+          "type": "Normal"
+        },
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "noisy-5",
+            "namespace": "pr-evidence"
+          },
+          "message": "Admitted by ClusterQueue a-noisy, wait time since reservation was <duration>",
+          "order": 11,
+          "reason": "Admitted",
+          "type": "Normal"
+        }
+      ],
+      "index": 1,
+      "localQueues": [
+        {
+          "admittedWorkloads": 0,
+          "clusterQueue": "a",
+          "name": "a",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 0
+        },
+        {
+          "admittedWorkloads": 5,
+          "clusterQueue": "a-noisy",
+          "name": "a-noisy",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 5
+        },
+        {
+          "admittedWorkloads": 1,
+          "clusterQueue": "b",
+          "name": "b",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 1
+        }
+      ],
+      "name": "noisy-borrow-flavor2",
+      "workloads": [
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-1",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-2",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-3",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-4",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-5",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "b",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor1"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue b",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "wl-b",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "b"
+        }
+      ]
+    },
+    {
+      "assertion": "Workload pr-evidence/wl-a QuotaReserved=False",
+      "clusterQueues": [
+        {
+          "admittedWorkloads": 0,
+          "flavorsUsage": [
+            {
+              "name": "flavor1",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "a",
+          "pendingWorkloads": 1,
+          "reservingWorkloads": 0
+        },
+        {
+          "admittedWorkloads": 5,
+          "flavorsUsage": [
+            {
+              "name": "flavor2",
+              "resources": [
+                {
+                  "borrowed": "5",
+                  "name": "cpu",
+                  "total": "5"
+                }
+              ]
+            }
+          ],
+          "name": "a-noisy",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 5
+        },
+        {
+          "admittedWorkloads": 1,
+          "flavorsUsage": [
+            {
+              "name": "flavor1",
+              "resources": [
+                {
+                  "borrowed": "1",
+                  "name": "cpu",
+                  "total": "1"
+                }
+              ]
+            },
+            {
+              "name": "flavor2",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                }
+              ]
+            }
+          ],
+          "name": "b",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 1
+        }
+      ],
+      "events": [
+        {
+          "involvedObject": {
+            "kind": "Workload",
+            "name": "wl-a",
+            "namespace": "pr-evidence"
+          },
+          "message": "couldn't assign flavors to pod set main: insufficient unused quota for cpu in flavor flavor1, 1 more needed",
+          "order": 12,
+          "reason": "WaitingForQuota",
+          "type": "Warning"
+        }
+      ],
+      "index": 2,
+      "localQueues": [
+        {
+          "admittedWorkloads": 0,
+          "clusterQueue": "a",
+          "name": "a",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 1,
+          "reservingWorkloads": 0
+        },
+        {
+          "admittedWorkloads": 5,
+          "clusterQueue": "a-noisy",
+          "name": "a-noisy",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 5
+        },
+        {
+          "admittedWorkloads": 1,
+          "clusterQueue": "b",
+          "name": "b",
+          "namespace": "pr-evidence",
+          "pendingWorkloads": 0,
+          "reservingWorkloads": 1
+        }
+      ],
+      "name": "preemptor-created",
+      "workloads": [
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-1",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-2",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-3",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-4",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": {
+            "clusterQueue": "a-noisy",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor2"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue a-noisy",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "noisy-5",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a-noisy"
+        },
+        {
+          "admission": null,
+          "conditions": [
+            {
+              "message": "The workload has no reservation",
+              "reason": "NoReservation",
+              "status": "False",
+              "type": "Admitted"
+            },
+            {
+              "message": "couldn't assign flavors to pod set main: insufficient unused quota for cpu in flavor flavor1, 1 more needed",
+              "reason": "WaitingForQuota",
+              "status": "False",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "wl-a",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "a"
+        },
+        {
+          "admission": {
+            "clusterQueue": "b",
+            "podSetAssignments": [
+              {
+                "count": 1,
+                "flavors": {
+                  "cpu": "flavor1"
+                },
+                "name": "main",
+                "resourceUsage": {
+                  "cpu": "1"
+                }
+              }
+            ]
+          },
+          "conditions": [
+            {
+              "message": "The workload is admitted",
+              "reason": "Admitted",
+              "status": "True",
+              "type": "Admitted"
+            },
+            {
+              "message": "Quota reserved in ClusterQueue b",
+              "reason": "QuotaReserved",
+              "status": "True",
+              "type": "QuotaReserved"
+            }
+          ],
+          "name": "wl-b",
+          "namespace": "pr-evidence",
+          "priority": 0,
+          "queueName": "b"
+        }
+      ]
+    }
+  ],
+  "run": {
+    "baseSha": "6382a00a7577f2ed0ee43bfab8494ef26743d89d",
+    "featureGates": {},
+    "headSha": "cb352053021caef4777502482f41e2470ca47dd5",
+    "k8sVersion": "1.37.0",
+    "producer": "kueue-pr-evidence-state-diff",
+    "runner": "envtest",
+    "scenario": "cohort-nominal-reclaim",
+    "sha": "6382a00a7577f2ed0ee43bfab8494ef26743d89d",
+    "side": "base",
+    "test": "test/integration/singlecluster/scheduler/fairsharing/fair_sharing_test.go: Should preempt a workload borrowing cohort nominal quota, despite the preemptor's high aggregate DRS"
+  },
+  "schemaVersion": "pr-evidence.capture/v1"
+}

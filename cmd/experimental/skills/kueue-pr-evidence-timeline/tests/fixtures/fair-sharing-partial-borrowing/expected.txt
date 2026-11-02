@@ -1,0 +1,76 @@
+**Scheduling decisions differ** from `preemptor-pending`: preemptions 1 → 0, requeues 1 → 0, admissions 3 → 2; base capture ends after `preemptor-pending`.
+
+Scenario `fair-sharing-partial-borrowing` · runner **envtest** (k8s 1.34.1) · gates `FairSharingPreemptWithinNominal=true` · from `kueue-pr-evidence-state-diff` captures
+
+⚠ base `preemptor-pending`: borrower re-admitted after preemption by preemptor, which stays pending (likely preemption loop)
+
+| # | checkpoint | base | head |
+|---|---|---|---|
+| 0 | `borrower-admitted` | admit borrower | same |
+| 1 | `saturated-admitted` | admit saturated | same |
+| 2 | `preemptor-pending` ≠ | pending preemptor · preempt preemptor→borrower (InCohortReclamation) · requeue borrower · admit borrower | pending preemptor |
+| 3 | `borrower-not-reclaimed` ≠ | — (capture ended) | — |
+
+Preemptions (preemptor → preemptee; `?` = inferred):
+
+| preemptor → preemptee | reason | priority | base | head |
+|---|---|---|---|---|
+| preemptor → borrower | InCohortReclamation | 0 vs 0 | 1 | 0 |
+
+<details><summary>Mermaid timeline (base vs head)</summary>
+
+```mermaid
+sequenceDiagram
+    participant K as kueue
+    participant W0 as borrower p0
+    participant W1 as saturated p0
+    participant W2 as preemptor p0
+    Note over K,W2: 0 borrower-admitted - base = head
+    K->>W0: admit borrower-cq
+    Note over K,W2: 1 saturated-admitted - base = head
+    K->>W1: admit saturated-cq
+    Note over K,W2: 2 preemptor-pending - differs
+    par base
+        K--)W2: pending no quota cpu, awaits preemption
+        W2-xW0: preempt InCohortReclamation prio 0 vs 0
+        K-->>W0: requeue Preempted
+        K->>W0: admit borrower-cq
+    and head
+        K--)W2: pending no quota memory
+    end
+    Note over K,W2: 3 borrower-not-reclaimed - differs
+    par base
+        Note over K: capture ended
+    and head
+        Note over K: no decisions
+    end
+```
+
+</details>
+
+<details><summary>Text timeline (event order)</summary>
+
+```text
+scenario fair-sharing-partial-borrowing  base a0394b0b0570  head 0925c3d8d531
+test     test/integration/singlecluster/scheduler/fairsharing/fair_sharing_test.go: Should not reclaim quota when preemptor borrows another requested resource
+[0] borrower-admitted — fs/borrower is admitted (borrows 4 cpu from preemptor-cq)
+  base  e0        reserve  borrower  borrower-cq
+        e1        admit    borrower  borrower-cq
+  head  = base
+[1] saturated-admitted — fs/saturated is admitted
+  base  e2        reserve  saturated  saturated-cq
+        e3        admit    saturated  saturated-cq
+  head  = base
+[2] preemptor-pending — fs/preemptor is pending (no quota reservation)
+  base  e4        pending  preemptor  no quota: cpu, awaits preemption
+        e5,e7     preempt  preemptor → borrower  InCohortReclamation  prio 0 vs 0  [/partial-borrowing-cohort/preemptor-cq → /partial-borrowing-cohort/borrower-cq]  +evicted
+        state     requeue  borrower  Preempted  (Requeued condition)
+        e8        reserve  borrower  borrower-cq
+        e9        admit    borrower  borrower-cq
+  head  e4        pending  preemptor  no quota: memory
+[3] borrower-not-reclaimed — Consistently: fs/borrower keeps its quota reservation; InCohortReclamation preemptions == 0
+  base  (capture ended before this checkpoint)
+  head  (no decisions)
+```
+
+</details>

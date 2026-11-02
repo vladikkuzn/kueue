@@ -1,0 +1,72 @@
+**Scheduling decisions differ** from `boosted-preempted`: preemptions 0 → 1, requeues 0 → 1, admissions 1 → 2; base capture ends after `second-pending`.
+
+Scenario `priority-boost-no-wpc` · runner **envtest** (k8s 1.37.0) · gates `PriorityBoost=true` · from `kueue-pr-evidence-state-diff` captures
+
+| # | checkpoint | base | head |
+|---|---|---|---|
+| 0 | `admitted` | admit wl-admitted | same |
+| 1 | `second-pending` | pending wl-pending | same |
+| 2 | `boosted-preempted` ≠ | — (capture ended) | preempt wl-pending→wl-admitted (InClusterQueue) · pending wl-pending |
+| 3 | `pending-reserved` ≠ | — (capture ended) | admit wl-pending · requeue wl-admitted · pending wl-admitted |
+
+Preemptions (preemptor → preemptee; `?` = inferred):
+
+| preemptor → preemptee | reason | priority | base | head |
+|---|---|---|---|---|
+| wl-pending → wl-admitted | InClusterQueue | 0 > -100 (boosted) | 0 | 1 |
+
+<details><summary>Mermaid timeline (base vs head)</summary>
+
+```mermaid
+sequenceDiagram
+    participant K as kueue
+    participant W0 as wl-admitted p0
+    participant W1 as wl-pending p0
+    Note over K,W1: 0 admitted - base = head
+    K->>W0: admit preemption-cq
+    Note over K,W1: 1 second-pending - base = head
+    K--)W1: pending no quota cpu
+    Note over K,W1: 2 boosted-preempted - differs
+    par base
+        Note over K: capture ended
+    and head
+        W1-xW0: preempt InClusterQueue prio 0 over -100 (boosted)
+        K--)W1: pending no quota cpu, awaits preemption
+    end
+    Note over K,W1: 3 pending-reserved - differs
+    par base
+        Note over K: capture ended
+    and head
+        K->>W1: admit preemption-cq
+        K-->>W0: requeue Preempted
+        K--)W0: pending no quota cpu
+    end
+```
+
+</details>
+
+<details><summary>Text timeline (event order)</summary>
+
+```text
+scenario priority-boost-no-wpc  base 602de8f1b432  head e691e542aa87
+test     test/integration/singlecluster/scheduler/scheduler_test.go: when PriorityBoost is enabled, boosting an admitted Workload without a WorkloadPriorityClass, re-evaluates pending Workloads
+[0] admitted — ClusterQueue preemption-cq Active=True; Workload pr-evidence/wl-admitted Admitted=True
+  base  e0        reserve  wl-admitted  preemption-cq
+        e1        admit    wl-admitted  preemption-cq
+  head  = base
+[1] second-pending — Workload pr-evidence/wl-pending QuotaReserved=False; ClusterQueue preemption-cq status.pendingWorkloads == 1
+  base  e2        pending  wl-pending  no quota: cpu
+  head  = base
+[2] boosted-preempted — Workload pr-evidence/wl-admitted Evicted=True (Preempted)
+  base  (capture ended before this checkpoint)
+  head  e3,e4     preempt  wl-pending → wl-admitted  InClusterQueue  prio 0 > -100 (boosted)  [/preemption-cq → /preemption-cq]  +evicted
+        e6        pending  wl-pending  no quota: cpu, awaits preemption
+[3] pending-reserved — Workload pr-evidence/wl-admitted is evicted; Workload pr-evidence/wl-pending QuotaReserved=True
+  base  (capture ended before this checkpoint)
+  head  e7        reserve  wl-pending  preemption-cq
+        e8        admit    wl-pending  preemption-cq
+        state     requeue  wl-admitted  Preempted  (released after eviction)
+        e9        pending  wl-admitted  no quota: cpu
+```
+
+</details>
