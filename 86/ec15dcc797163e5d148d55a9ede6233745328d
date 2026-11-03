@@ -1,0 +1,19 @@
+pkg/util/equality/podset.go
+  s_80b43f2f074883::t_46f509a5dff00e 59-74,79-80,82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86ec15dcc797163e5d148d55a9ede6233745328d",
+  "prompts": {},
+  "sessions": {
+    "s_80b43f2f074883": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53c34a86-1cc2-4f4d-ac98-556c6f117e33",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
