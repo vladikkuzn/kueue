@@ -1,0 +1,37 @@
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/inject-pr-notes
+  s_887c930aebe83f::t_3bb30c9872b828 70-71,95-97
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/kueue-worktree.sh
+  s_887c930aebe83f::t_3944e47959216c 40
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/merge-base.sh
+  s_887c930aebe83f::t_f29890819e1011 80-81
+cmd/experimental/skills/kueue-pr-evidence-common/tests/inject_pr_notes_test.py
+  s_887c930aebe83f::t_f0f59d25939d5a 194
+cmd/experimental/skills/kueue-pr-evidence-common/tests/scripts_test.py
+  s_887c930aebe83f::t_dd1b2f2a13cb80 83-99
+cmd/experimental/skills/kueue-pr-evidence-state-diff/SKILL.md
+  s_887c930aebe83f::t_989d77a9aea1db 86,113-114
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenario-format.md
+  s_887c930aebe83f::t_925b37fc023d13 125-126
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/state-diff
+  s_887c930aebe83f::t_9cd81be0b58640 345-348,370-371,437,444-463,479-483
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/state_diff_lib.py
+  s_887c930aebe83f::t_b0af35923e5136 701-702,722-724
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/state_diff_test.py
+  s_887c930aebe83f::t_2b00f53fa73b61 424-427,462-503
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "574b9a8edbda8c3e9b6ce35f4bf834bb8213b1cb",
+  "prompts": {},
+  "sessions": {
+    "s_887c930aebe83f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c87aa19f-f96b-409a-ac75-0014625e8d09",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
