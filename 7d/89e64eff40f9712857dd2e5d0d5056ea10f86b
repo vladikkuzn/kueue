@@ -3,6 +3,12 @@ pkg/util/equality/podset.go
   s_80b43f2f074883::t_46f509a5dff00e 59-74,79-80,82
 pkg/util/equality/podset_test.go
   s_986445d2ef76dc::t_1219da1d92a6e5 116,119-183,442-444,452-463
+pkg/controller/jobs/rayjob/rayjob_controller.go
+  s_61f70af72a7dcc::t_1e301312525dd7 99
+pkg/controller/jobs/rayservice/rayservice_controller.go
+  s_61f70af72a7dcc::t_fa3877784b9c06 97
+pkg/controller/jobs/raycluster/raycluster_controller.go
+  s_61f70af72a7dcc::t_9d3fb81edbe4ae 86
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -10,6 +16,14 @@ pkg/util/equality/podset_test.go
   "base_commit_sha": "7d89e64eff40f9712857dd2e5d0d5056ea10f86b",
   "prompts": {},
   "sessions": {
+    "s_61f70af72a7dcc": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-b24a6da0-228f-4185-afb7-dc425d258c3d",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
     "s_80b43f2f074883": {
       "agent_id": {
         "tool": "claude",
