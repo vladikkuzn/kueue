@@ -1,0 +1,47 @@
+cmd/experimental/skills/kueue-pr-evidence-common/SKILL.md
+  s_887c930aebe83f::t_12f4cbbfdc0a94 65-67
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/inject-pr-notes
+  s_a11dfc7d783014::t_b3e79250780cec 75-76,78-79,81-87,90-94
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/kueue-worktree.sh
+  s_887c930aebe83f::t_8114397aa5113e 23,32-33,42,58,67-72,90,103-110,112-118
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/merge-base.sh
+  s_887c930aebe83f::t_13b4b28ae2b55a 55,73,75-77,90-91
+cmd/experimental/skills/kueue-pr-evidence-common/tests/inject_pr_notes_test.py
+  s_887c930aebe83f::t_42c5e5aa6a1b67 190-193
+cmd/experimental/skills/kueue-pr-evidence-common/tests/scripts_test.py
+  s_887c930aebe83f::t_2fc62c6a6d12e8 83-113,133-142
+cmd/experimental/skills/kueue-pr-evidence-state-diff/SKILL.md
+  s_887c930aebe83f::t_033919ba00585d 111-114
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scenario-format.md
+  s_887c930aebe83f::t_8eb2f053dbdf84 30
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/state-diff
+  s_887c930aebe83f::t_76e9aa8a38a84c 245-247,305-306,386-387,431-450,454-459
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/state_diff_lib.py
+  s_a11dfc7d783014::t_e8fc16139d175a 28,516-518,523,544-549,551-556,561-562,600-605,699-701,703-704,706,708-714,717-721
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/state_diff_test.py
+  s_887c930aebe83f::t_5368e6b4abd022 23-24,26,399-428,444-465
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6caaec7b7cec25e7b773ce9d2357bb600bac224b",
+  "prompts": {},
+  "sessions": {
+    "s_887c930aebe83f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c87aa19f-f96b-409a-ac75-0014625e8d09",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_a11dfc7d783014": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-fe98f6c0-ebca-4401-8be5-d7a4ea6f3d81",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
