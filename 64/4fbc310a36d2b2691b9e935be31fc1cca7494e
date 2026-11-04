@@ -1,0 +1,35 @@
+cmd/experimental/skills/kueue-pr-evidence-common/capture-schema.md
+  s_887c930aebe83f::t_6f47d9fb8be31d 22
+cmd/experimental/skills/kueue-pr-evidence-common/scripts/inject-pr-notes
+  s_887c930aebe83f::t_5b1c3bd4ce33ad 70-78,90-91,104
+cmd/experimental/skills/kueue-pr-evidence-common/tests/inject_pr_notes_test.py
+  s_887c930aebe83f::t_65f8158c8224b4 195-196
+cmd/experimental/skills/kueue-pr-evidence-state-diff/SKILL.md
+  s_887c930aebe83f::t_a1d7b8eb84cef4 113-115
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/state-diff
+  s_887c930aebe83f::t_d4e09ebc42760a 422,445-451,458-465,468,478-479,492,524
+cmd/experimental/skills/kueue-pr-evidence-state-diff/scripts/state_diff_lib.py
+  s_887c930aebe83f::t_c8c5fbace6c373 596-599,654,657,705-713,721-722,735
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/fixtures/run-priority-boost/capture.base.json
+  s_887c930aebe83f::t_acfa9cae48a4b6 206-306
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/fixtures/run-priority-boost/capture.head.json
+  s_887c930aebe83f::t_fe6e82328728bf 497
+cmd/experimental/skills/kueue-pr-evidence-state-diff/tests/state_diff_test.py
+  s_887c930aebe83f::t_11a2d6e8582882 427-434,470,474,478-504,528-531
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "644fbc310a36d2b2691b9e935be31fc1cca7494e",
+  "prompts": {},
+  "sessions": {
+    "s_887c930aebe83f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c87aa19f-f96b-409a-ac75-0014625e8d09",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
