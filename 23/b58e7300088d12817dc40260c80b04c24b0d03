@@ -12,6 +12,7 @@ codecov.yml
   s_7edb3959f5b31b::t_97a7935a07e4c2 7-34,43-45
 hack/make/verify.mk
   s_7edb3959f5b31b::t_a5d4bfb4f99e9e 344-347
+  s_7edb3959f5b31b::t_5962f5b4e6baab 131
 ---
 {
   "schema_version": "authorship/3.0.0",
