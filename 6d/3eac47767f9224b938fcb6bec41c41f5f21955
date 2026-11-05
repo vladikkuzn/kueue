@@ -8,6 +8,7 @@ hack/testing/merge-unit-coverage_test.sh
   s_7edb3959f5b31b::t_0ec88a531ddffd 47-48
 hack/make/verify.mk
   s_7edb3959f5b31b::t_fbec28c7bf8caf 344-347
+  s_7edb3959f5b31b::t_cc716e1d182115 131
 hack/testing/merge-unit-coverage.sh
   s_7edb3959f5b31b::t_a39819ceb502f3 25-28,31,108-110,120,124,252-254,300,303-322
 ---
