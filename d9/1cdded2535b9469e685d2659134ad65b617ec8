@@ -1,0 +1,23 @@
+OWNERS_ALIASES
+  s_9bc36294640e32::t_e6f46d685581b6 24-25
+pkg/cache/scheduler/OWNERS
+  s_9bc36294640e32::t_e28f2e6d942fbc 1-4
+pkg/scheduler/OWNERS
+  s_9bc36294640e32::t_4d00a8d9c069eb 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d91cdded2535b9469e685d2659134ad65b617ec8",
+  "prompts": {},
+  "sessions": {
+    "s_9bc36294640e32": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-b0d84586-d06f-40e8-a338-268cf1a55870",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
