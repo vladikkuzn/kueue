@@ -21,6 +21,8 @@ aliases:
     - henry3260
   concurrent-admission-reviewers:
     - ivnovakov
+  scheduler-reviewers:
+    - vladikkuzn
   deployment-integration-approvers:
     - mbobrovskyi
   leaderworkerset-integration-approvers:
