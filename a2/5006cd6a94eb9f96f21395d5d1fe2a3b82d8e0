@@ -1,0 +1,22 @@
+OWNERS_ALIASES
+  s_348348e57d95db::t_d94cd3037535f9 54
+  s_348348e57d95db::t_c33b4e35bfcc3c 34-35
+cmd/experimental/kueue-priority-booster/OWNERS
+  s_348348e57d95db::t_be00ac2f633fe1 2-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a25006cd6a94eb9f96f21395d5d1fe2a3b82d8e0",
+  "prompts": {},
+  "sessions": {
+    "s_348348e57d95db": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-0ae8cb6c-cc07-4d66-8aa0-6290b28e62b7",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
