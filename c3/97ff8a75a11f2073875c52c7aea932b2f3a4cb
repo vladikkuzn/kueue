@@ -1,0 +1,31 @@
+OWNERS_ALIASES
+  s_876feb3afd3f56::t_c414516a017ab1 67-68
+OWNERS
+  s_876feb3afd3f56::t_ea1c6f3c0dc09f 31-32
+hack/OWNERS
+  s_876feb3afd3f56::t_d7bc3caf443bae 5-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c397ff8a75a11f2073875c52c7aea932b2f3a4cb",
+  "prompts": {},
+  "sessions": {
+    "s_876feb3afd3f56": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-ddb8a857-a3f1-4e2e-9323-1256bdc3b3c2",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_9bc36294640e32": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-b0d84586-d06f-40e8-a338-268cf1a55870",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
