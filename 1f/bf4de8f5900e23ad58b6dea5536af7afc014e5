@@ -1,0 +1,52 @@
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_8918ba3ec53636::t_b11ca39128134d 485
+  s_7cff14f59b6572::t_ec2fbe2451b036 544-549,552-555,559-561,566-570
+  s_8918ba3ec53636::t_a3c6e312c1e8fb 550-551,556-558,562-565,571-574
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_8918ba3ec53636::t_84111ba72d1a32 955,972,974,979
+  s_8918ba3ec53636::t_ef8917f7d51d9b 228-234,236-242,244-315
+  s_7cff14f59b6572::t_ee94caf09dea0b 949,966,971,973,976-978
+  s_8918ba3ec53636::t_40b9c5b9558b91 3537,3539,3541-3542,3544-3545,3547-3548,3553-3562
+  s_7cff14f59b6572::t_c71e6be9aeb503 235,243
+  s_69c6f7d8fd137e::t_51977c5ba1e61b 3538,3540,3543,3546,3549-3552
+  s_69c6f7d8fd137e::t_e40d84321d238f 939-948,950-954,956-965,967-970,975
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_69c6f7d8fd137e::t_cf86658554830f 2235-2236
+  s_8918ba3ec53636::t_b97829467105e9 2155-2168,2184,2191,2197-2199,2218,2221-2232
+  s_69c6f7d8fd137e::t_bd17ed2581fd37 2195,2208-2209,2212,2216
+  s_69c6f7d8fd137e::t_4858796bbdb1dd 2149-2150
+  s_7cff14f59b6572::t_54389adc665cf1 2151-2154,2169-2174,2182-2183,2185-2190,2192-2194,2196,2200-2207,2210-2211,2213-2215,2217,2219-2220,2233-2234,2237-2238
+  s_8918ba3ec53636::t_ed37d943fdf78c 2175-2181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1fbf4de8f5900e23ad58b6dea5536af7afc014e5",
+  "prompts": {},
+  "sessions": {
+    "s_69c6f7d8fd137e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-9c6b509e-c2b7-4d10-b538-913689513626",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_7cff14f59b6572": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-0d347d4d-927c-42f0-82f5-8e9dce4b0d6b",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_8918ba3ec53636": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-ed8b5af9-4f91-4c45-b2e4-a95057b4a27a",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
