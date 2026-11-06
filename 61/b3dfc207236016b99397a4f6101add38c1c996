@@ -1,0 +1,38 @@
+hack/make/test.mk
+  s_6d5a098badcb48::t_9270f42f825c01 135,138
+hack/testing/merge-unit-coverage.sh
+  s_6d5a098badcb48::t_3031cb9a04a9cc 48,50
+  s_6d5a098badcb48::t_f0e2f6362af657 144-145
+  s_6d5a098badcb48::t_b48ab9d8353cd3 194,198,297,301,339,356
+  s_6d5a098badcb48::t_daab0b2a24ca35 330-331
+  s_6d5a098badcb48::t_321f39a640ee30 372-379
+  s_6d5a098badcb48::t_95f77d0a223145 188
+  s_6d5a098badcb48::t_406d1843763c86 223-229,234-243
+  s_6d5a098badcb48::t_d7fe0c059fe523 47,49
+  s_6d5a098badcb48::t_17b8b6e4d3725b 341,345
+  s_6d5a098badcb48::t_aeb768ebf4b4e2 22-23,29-31
+  s_6d5a098badcb48::t_95cb80b10cab01 56-59
+  s_6d5a098badcb48::t_9ec29d0d6d15db 71-92
+  s_6d5a098badcb48::t_b5005540d571fc 321
+hack/testing/merge-unit-coverage_test.sh
+  s_6d5a098badcb48::t_f48ea68b7de551 311,320,326,332,338
+  s_6d5a098badcb48::t_80ed5bedb2d6d0 116-118,120-124,126-127
+  s_6d5a098badcb48::t_a107d5dd889a71 308-310,312-319,321-325,327-331,333-337,339-384
+  s_6d5a098badcb48::t_e8990821702c48 203-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61b3dfc207236016b99397a4f6101add38c1c996",
+  "prompts": {},
+  "sessions": {
+    "s_6d5a098badcb48": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-d00ffab0-bfe5-464f-8ab6-d1a06a10277a",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
