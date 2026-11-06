@@ -1,0 +1,28 @@
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_8918ba3ec53636::t_ef8917f7d51d9b 228-329,333-336,340-395
+  s_8918ba3ec53636::t_40b9c5b9558b91 3674-3796
+  s_8918ba3ec53636::t_84111ba72d1a32 1019-1116
+  s_8918ba3ec53636::t_72d3ecf95ea0ca 330-332,337-339
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_8918ba3ec53636::t_ed37d943fdf78c 2104-2197
+  s_8918ba3ec53636::t_b97829467105e9 1746-1904
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_8918ba3ec53636::t_b11ca39128134d 485
+  s_8918ba3ec53636::t_a3c6e312c1e8fb 544-582
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "42b71a7eb08ae7d2b8ed678e071fafd43f63fb59",
+  "prompts": {},
+  "sessions": {
+    "s_8918ba3ec53636": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-ed8b5af9-4f91-4c45-b2e4-a95057b4a27a",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
