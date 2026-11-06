@@ -1,0 +1,28 @@
+cmd/experimental/skills/kueue-pr-evidence-state-diff/SKILL.md
+  s_f906309778951f::t_db0d7080efe12c 46
+  s_f906309778951f::t_fbae36d31eca21 110
+  s_f906309778951f::t_2f9c3d06fb3ece 3,11-15,20-45,47-70,72,74-76,78,80-85,87,89,91,93-95,97,99,101-105,107-108,112-113,115-120,122-123,126-131
+cmd/experimental/skills/README.md
+  s_f906309778951f::t_4ad5b0e15c9d41 18-19
+cmd/experimental/skills/kueue-pr-evidence-common/SKILL.md
+  s_f906309778951f::t_ff29d137b01df5 13-14
+  s_f906309778951f::t_667684322bb81a 37
+  s_f906309778951f::t_63ac36f61fd55c 3,11-12,16-33,36,38,41-79
+  s_f906309778951f::t_a7001eb7585199 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f822a9bf4bd226669d6dd95e7baeab0417b7528",
+  "prompts": {},
+  "sessions": {
+    "s_f906309778951f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-e11781c1-181e-4454-86da-9d85c0c0dac2",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
