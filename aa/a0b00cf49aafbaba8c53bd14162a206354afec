@@ -1,0 +1,40 @@
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_7cff14f59b6572::t_ec2fbe2451b036 544-549,552-555,559-561,566-570
+  s_8918ba3ec53636::t_b11ca39128134d 485
+  s_8918ba3ec53636::t_a3c6e312c1e8fb 550-551,556-558,562-565,571-574
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_8918ba3ec53636::t_b97829467105e9 2154-2167,2183,2190,2195-2197,2216,2219-2230,2233
+  s_8918ba3ec53636::t_ed37d943fdf78c 2174-2180
+  s_7cff14f59b6572::t_54389adc665cf1 2149-2153,2168-2173,2181-2182,2184-2189,2191-2194,2198-2215,2217-2218,2231-2232,2234-2235
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_8918ba3ec53636::t_ef8917f7d51d9b 228-234,236-242,244-315
+  s_8918ba3ec53636::t_40b9c5b9558b91 3551-3553,3555-3568,3570-3579
+  s_7cff14f59b6572::t_ee94caf09dea0b 946,948-958,960-961,963-964,973-978,980-985,987,989-992
+  s_7cff14f59b6572::t_c71e6be9aeb503 235,243
+  s_8918ba3ec53636::t_84111ba72d1a32 939-945,947,959,962,965-972,979,986,988,993
+  s_7cff14f59b6572::t_75f3a9fb6f3654 3554,3569
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aaa0b00cf49aafbaba8c53bd14162a206354afec",
+  "prompts": {},
+  "sessions": {
+    "s_7cff14f59b6572": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-0d347d4d-927c-42f0-82f5-8e9dce4b0d6b",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_8918ba3ec53636": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-ed8b5af9-4f91-4c45-b2e4-a95057b4a27a",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
