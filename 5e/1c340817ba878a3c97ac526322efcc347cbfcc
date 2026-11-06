@@ -1,0 +1,47 @@
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/heads/test/e2e/singlecluster/pod_test.go.txt
+  s_6a2d657c3b1b32::t_95ead2e8902dff 1-28
+cmd/experimental/skills/kueue-pr-evidence-red-green/SKILL.md
+  s_6a2d657c3b1b32::t_bce4214ac42e44 1-115
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/red_green_test.py
+  s_6a2d657c3b1b32::t_581c33789b0c2f 1-539
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/ginkgo-report-pass.json
+  s_6a2d657c3b1b32::t_cc9d9f289ab9b4 1-82
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/gotest-build-fail.jsonl
+  s_6a2d657c3b1b32::t_69d49272466d4d 1-6
+cmd/experimental/skills/kueue-pr-evidence-red-green/scripts/red-green
+  s_6a2d657c3b1b32::t_9f3e45f9288ade 1-1237
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/gotest-base-fail.jsonl
+  s_6a2d657c3b1b32::t_300cb901501a18 1-48
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/ginkgo-report.json
+  s_6a2d657c3b1b32::t_d599c31f5e0224 1-89
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/heads/pkg/controller/core/workload_controller_test.go.txt
+  s_6a2d657c3b1b32::t_96c8a36d5d6a42 1-74
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/junit-unit.xml
+  s_6a2d657c3b1b32::t_d843a0a19aa844 1-17
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/heads/test/integration/multikueue/pod_test.go.txt
+  s_6a2d657c3b1b32::t_334fec38255d49 1-37
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/gotest-head-pass.jsonl
+  s_6a2d657c3b1b32::t_d08205150ec57b 1-36
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/statuses.json
+  s_6a2d657c3b1b32::t_0905803cfa1d2a 1-48
+cmd/experimental/skills/README.md
+  s_6a2d657c3b1b32::t_37e10cdd899d80 19,56-57
+cmd/experimental/skills/kueue-pr-evidence-red-green/tests/fixtures/pr.diff
+  s_6a2d657c3b1b32::t_7e26dc87a3f8e2 1-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e1c340817ba878a3c97ac526322efcc347cbfcc",
+  "prompts": {},
+  "sessions": {
+    "s_6a2d657c3b1b32": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bda14a7a-da2d-4569-bb08-5c33f5626801",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
