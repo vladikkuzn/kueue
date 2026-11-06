@@ -1,0 +1,39 @@
+cmd/experimental/skills/README.md
+  s_f906309778951f::t_4ad5b0e15c9d41 18-19
+cmd/experimental/skills/kueue-pr-evidence-state-diff/SKILL.md
+  s_b46c821316a0e9::t_3a943ff7afa8ee 91-92
+  s_f906309778951f::t_2f9c3d06fb3ece 3,11-15,20-45,47-65,71,76,78-80,82,84-89,94,96,98-100,102,104,106-110,125-126,130-131,134-139
+  s_b46c821316a0e9::t_420933f91d132e 112-113,115,117,119-123,127-128
+  s_b46c821316a0e9::t_fef9180f60cab6 66-70,72-74
+  s_f906309778951f::t_db0d7080efe12c 46
+cmd/experimental/skills/kueue-pr-evidence-common/SKILL.md
+  s_f906309778951f::t_63ac36f61fd55c 3,11-12,16-24,27-28,32-35,38,40,43-81
+  s_f906309778951f::t_ff29d137b01df5 13-14
+  s_b46c821316a0e9::t_b0bd1ef9758205 25-26,29-31
+  s_f906309778951f::t_a7001eb7585199 15
+  s_f906309778951f::t_667684322bb81a 39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "89aaf9eeee636fff2fc694c9d00bef5644abb10e",
+  "prompts": {},
+  "sessions": {
+    "s_b46c821316a0e9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-a114158e-940f-4f52-a88d-f5520cc5b013",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_f906309778951f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-e11781c1-181e-4454-86da-9d85c0c0dac2",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
