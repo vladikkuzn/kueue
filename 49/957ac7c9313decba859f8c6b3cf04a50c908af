@@ -1,0 +1,36 @@
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/SKILL.md
+  s_2bf16537a2ada6::t_2a176ab5b7d967 24-28,36-37,45,56-59,62-63,65-66,71,86-87,90,94-96
+  s_2bf16537a2ada6::t_05236a92b978da 104
+  s_2bf16537a2ada6::t_163443a00cd5ad 161
+  s_2bf16537a2ada6::t_c7b61efdd02b94 1-23,29-35,38-44,46-55,67-69,72-73,76-81,84,91-93,97-103,105-107,109-113,115-118,124-134,140-160,162-172
+  s_2bf16537a2ada6::t_84d7ceda15c022 60-61
+  s_2bf16537a2ada6::t_7a3519c08656e6 64
+  s_2bf16537a2ada6::t_70f72f73bb0cd8 70
+  s_2bf16537a2ada6::t_b1621d412c4f50 74-75
+  s_2bf16537a2ada6::t_7ce8076b879a8b 82-83
+  s_2bf16537a2ada6::t_bfb0b50ad2f323 85
+  s_2bf16537a2ada6::t_c5942734e1e809 88-89
+  s_2bf16537a2ada6::t_e1db3f03a836d0 108
+  s_2bf16537a2ada6::t_111134c8f40887 114
+  s_2bf16537a2ada6::t_408b4cdaa8cda4 119-123
+  s_2bf16537a2ada6::t_cd5ad5fc12f9c2 135-139
+cmd/experimental/skills/README.md
+  s_2bf16537a2ada6::t_dc509bed59d740 20
+  s_2bf16537a2ada6::t_cb17d4c936c10c 59-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49957ac7c9313decba859f8c6b3cf04a50c908af",
+  "prompts": {},
+  "sessions": {
+    "s_2bf16537a2ada6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-f9fe79c2-5433-49bc-9a0b-c389b6265dea",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
