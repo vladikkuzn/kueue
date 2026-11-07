@@ -1,0 +1,47 @@
+cmd/experimental/skills/README.md
+  s_2bf16537a2ada6::t_cb17d4c936c10c 59-60
+  s_2bf16537a2ada6::t_dc509bed59d740 20
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/SKILL.md
+  s_2bf16537a2ada6::t_163443a00cd5ad 164
+  s_2bf16537a2ada6::t_c7b61efdd02b94 1-23,29-35,38-44,46-55,68-70,73-74,77-82,85,92-94,98-104,106-108,110-114,116,120-121,127-137,143-159,161-163,165-175
+  s_2bf16537a2ada6::t_2a176ab5b7d967 24-28,36-37,45,56-58,64,66-67,72,87-88,91,95-97
+  s_7c4c52042db15b::t_f8c1011441947d 62-63
+  s_2bf16537a2ada6::t_c5942734e1e809 89-90
+  s_2bf16537a2ada6::t_111134c8f40887 115
+  s_7c4c52042db15b::t_e9d90ebdcc8d14 160
+  s_2bf16537a2ada6::t_408b4cdaa8cda4 122-126
+  s_7c4c52042db15b::t_21b315e429c11d 117-119
+  s_2bf16537a2ada6::t_b1621d412c4f50 75-76
+  s_2bf16537a2ada6::t_cd5ad5fc12f9c2 138-142
+  s_2bf16537a2ada6::t_7ce8076b879a8b 83-84
+  s_2bf16537a2ada6::t_7a3519c08656e6 65
+  s_7c4c52042db15b::t_b2de7f07b62960 59-61
+  s_2bf16537a2ada6::t_bfb0b50ad2f323 86
+  s_2bf16537a2ada6::t_e1db3f03a836d0 109
+  s_2bf16537a2ada6::t_05236a92b978da 105
+  s_2bf16537a2ada6::t_70f72f73bb0cd8 71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b809c3a59abdac6fc5d9b19f69b46ae15ce2a59",
+  "prompts": {},
+  "sessions": {
+    "s_2bf16537a2ada6": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-f9fe79c2-5433-49bc-9a0b-c389b6265dea",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_7c4c52042db15b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-762508fd-7bc1-4edf-a899-023208d57d18",
+        "model": "unknown"
+      },
+      "human_author": null
+    }
+  }
+}
