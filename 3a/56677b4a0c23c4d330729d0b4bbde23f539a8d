@@ -1,0 +1,39 @@
+hack/tools/go.sum
+  s_7edb3959f5b31b::t_2bd580010ecdc8 100,758-763,1728-1729
+hack/tools/go.mod
+  s_7edb3959f5b31b::t_244f095d564fd4 8,17,30,42,303-304
+hack/make/test.mk
+  s_7edb3959f5b31b::t_c05aeee5471618 131-137
+hack/make/deps.mk
+  s_7edb3959f5b31b::t_a9289edc57d415 123-130
+  s_887c930aebe83f::t_739736dc8cfabc 24-25,57-58
+hack/tools/pinversion.go
+  s_7edb3959f5b31b::t_97782df0449afb 26,35
+hack/testing/merge-unit-coverage.sh
+  s_887c930aebe83f::t_74351b4788a829 1-63,69-323
+  s_7edb3959f5b31b::t_edb8eae7a4961a 64-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a56677b4a0c23c4d330729d0b4bbde23f539a8d",
+  "prompts": {},
+  "sessions": {
+    "s_7edb3959f5b31b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02914f17-05f2-4596-b9e3-4b2b586c0e51",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_887c930aebe83f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c87aa19f-f96b-409a-ac75-0014625e8d09",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
