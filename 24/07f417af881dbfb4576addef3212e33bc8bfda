@@ -1,0 +1,20 @@
+hack/testing/merge-unit-coverage_test.sh
+  s_6d5a098badcb48::t_0284c03bf991b2 32-36
+  s_6d5a098badcb48::t_c707da72cb40b5 247-248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2407f417af881dbfb4576addef3212e33bc8bfda",
+  "prompts": {},
+  "sessions": {
+    "s_6d5a098badcb48": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-d00ffab0-bfe5-464f-8ab6-d1a06a10277a",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
