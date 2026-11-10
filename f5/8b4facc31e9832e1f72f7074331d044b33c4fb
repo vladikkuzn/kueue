@@ -12,6 +12,7 @@ codecov.yml
   s_7edb3959f5b31b::t_97a7935a07e4c2 7-34,43-45
 hack/make/verify.mk
   s_7edb3959f5b31b::t_a5d4bfb4f99e9e 351-354
+  s_7255b4068336ba::t_581846b49272f0 132
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -19,6 +20,14 @@ hack/make/verify.mk
   "base_commit_sha": "f58b4facc31e9832e1f72f7074331d044b33c4fb",
   "prompts": {},
   "sessions": {
+    "s_7255b4068336ba": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-ffd7a48e-b2c8-49dd-8975-b7f504a03802",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
     "s_7edb3959f5b31b": {
       "agent_id": {
         "tool": "claude",
