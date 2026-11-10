@@ -8,6 +8,7 @@ hack/testing/merge-unit-coverage_test.sh
   s_7edb3959f5b31b::t_0ec88a531ddffd 47-48
 hack/make/verify.mk
   s_7edb3959f5b31b::t_fbec28c7bf8caf 351-354
+  s_20c17c0bf608b9::t_6e8cb95ce857ed 132
 hack/testing/merge-unit-coverage.sh
   s_7edb3959f5b31b::t_a39819ceb502f3 25-28,31,108-110,120,124,252-254,300,303-322
 ---
@@ -17,6 +18,14 @@ hack/testing/merge-unit-coverage.sh
   "base_commit_sha": "7faf62d97fd988f054b3b241622ba1fd3e7e196f",
   "prompts": {},
   "sessions": {
+    "s_20c17c0bf608b9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-4578025b-4bca-42d4-b81d-f2f0fcdd5fcd",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
     "s_7edb3959f5b31b": {
       "agent_id": {
         "tool": "claude",
