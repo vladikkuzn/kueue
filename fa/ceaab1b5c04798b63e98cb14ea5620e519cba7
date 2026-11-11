@@ -1,0 +1,65 @@
+pkg/controller/admissionchecks/provisioning/constants.go
+  s_915bbc3f5314f0::t_762df819589c30 23-27
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_69c6f7d8fd137e::t_cf86658554830f 2233-2234
+  s_69c6f7d8fd137e::t_4858796bbdb1dd 2149-2150
+  s_69c6f7d8fd137e::t_bd17ed2581fd37 2195,2208-2209
+  s_7cff14f59b6572::t_54389adc665cf1 2151-2154,2169-2174,2182-2183,2185-2190,2192-2194,2196,2200,2202-2207,2210-2211,2215,2217-2218,2231-2232,2235-2236
+  s_8918ba3ec53636::t_b97829467105e9 2155-2168,2184,2191,2197-2199,2216,2219-2230
+  s_8918ba3ec53636::t_ed37d943fdf78c 2175-2181
+  s_915bbc3f5314f0::t_d7be645785e5a4 2201,2212-2214
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_69c6f7d8fd137e::t_51977c5ba1e61b 3529,3531,3534,3537,3540-3543
+  s_69c6f7d8fd137e::t_e40d84321d238f 760,779,921-930,932-936,938-947,949-952,957
+  s_8918ba3ec53636::t_ef8917f7d51d9b 228-234,236-242,244-295
+  s_8918ba3ec53636::t_84111ba72d1a32 937,954,956,961
+  s_7cff14f59b6572::t_c71e6be9aeb503 235,243
+  s_8918ba3ec53636::t_40b9c5b9558b91 3528,3530,3532-3533,3535-3536,3538-3539,3544-3553
+  s_7cff14f59b6572::t_ee94caf09dea0b 931,948,953,955,958-960
+  s_915bbc3f5314f0::t_05113f603bbb61 761,780,2108-2109,2966-2967,2986-2987,3001-3002,3090-3091,3111-3112,3126-3127,3270-3271,3382-3383
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_8918ba3ec53636::t_a3c6e312c1e8fb 550,556-559
+  s_8918ba3ec53636::t_b11ca39128134d 485
+  s_915bbc3f5314f0::t_cc33a17a8e020d 544-549,554
+  s_7cff14f59b6572::t_ec2fbe2451b036 551-553,555
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "faceaab1b5c04798b63e98cb14ea5620e519cba7",
+  "prompts": {},
+  "sessions": {
+    "s_69c6f7d8fd137e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-9c6b509e-c2b7-4d10-b538-913689513626",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_7cff14f59b6572": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-0d347d4d-927c-42f0-82f5-8e9dce4b0d6b",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_8918ba3ec53636": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-ed8b5af9-4f91-4c45-b2e4-a95057b4a27a",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_915bbc3f5314f0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-8edc4ed2-85b2-4d83-aa3b-155a0a1df5f5",
+        "model": "unknown"
+      },
+      "human_author": null
+    }
+  }
+}
