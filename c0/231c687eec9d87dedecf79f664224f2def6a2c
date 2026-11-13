@@ -1,0 +1,51 @@
+cmd/experimental/skills/README.md
+  s_2dac124442db33::t_a62129fc651110 62-63
+  s_2dac124442db33::t_bf0d888a31d57c 21
+cmd/experimental/skills/kueue-pr-evidence-timeline/SKILL.md
+  s_2dac124442db33::t_1add4342e9a1d3 36
+  s_2dac124442db33::t_5287a8b0b2b1a6 121
+  s_2dac124442db33::t_d93a3141e67c05 125
+  s_e9a4f6705f40b5::t_440970ce834f89 84-86
+  s_e9a4f6705f40b5::t_b384d7429368a6 38-47
+  s_e9a4f6705f40b5::t_c66ea7bc1b3bbd 131
+  s_2dac124442db33::t_5dc9e049093e15 1-33,55-57,79-81,102-109,113,115-120,122-124,126-130,132,135-136,138,141-144,146,148,150,154,160,162-163
+  s_e9a4f6705f40b5::t_fc3c3ab034c1ff 60-66
+  s_e9a4f6705f40b5::t_ac871c0ca36068 51
+  s_e9a4f6705f40b5::t_5bab685ef85f65 149
+  s_2dac124442db33::t_130fde2783ca3f 34-35
+  s_e9a4f6705f40b5::t_ae89de0f7e82ff 112
+  s_2dac124442db33::t_94d36d04ce8363 53-54
+  s_fc79e4f708ffc9::t_314d467896b985 37,48-50,52,58-59,67-78,82-83,87-101,110-111,114,133-134,137,139-140,145,147,151-153,155-159,161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0231c687eec9d87dedecf79f664224f2def6a2c",
+  "prompts": {},
+  "sessions": {
+    "s_2dac124442db33": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-385c3479-d3e6-4e6a-93bf-0db81667c3ca",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_e9a4f6705f40b5": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-c600adde-349d-4da7-9a9c-204219255413",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_fc79e4f708ffc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a7c7f77-c300-4389-915b-f5654b011e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
