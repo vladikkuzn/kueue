@@ -1,0 +1,36 @@
+cmd/experimental/skills/kueue-pr-evidence-timeline/SKILL.md
+  s_2dac124442db33::t_5dc9e049093e15 1-33,56-59,80-82,103-110,114,116-121,123-125,127-133,136-137,139,142-145,147,149-151,155,161,163-164
+  s_2dac124442db33::t_130fde2783ca3f 34-35
+  s_fc79e4f708ffc9::t_314d467896b985 37-53,60-79,83-102,111-113,115,134-135,138,140-141,146,148,152-154,156-160,162
+  s_2dac124442db33::t_1add4342e9a1d3 36
+  s_2dac124442db33::t_94d36d04ce8363 54-55
+  s_2dac124442db33::t_5287a8b0b2b1a6 122
+  s_2dac124442db33::t_d93a3141e67c05 126
+cmd/experimental/skills/README.md
+  s_2dac124442db33::t_bf0d888a31d57c 20
+  s_2dac124442db33::t_a62129fc651110 59-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82f7b36501ebacc4df578a574122a7ab654dd316",
+  "prompts": {},
+  "sessions": {
+    "s_2dac124442db33": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-385c3479-d3e6-4e6a-93bf-0db81667c3ca",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_fc79e4f708ffc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a7c7f77-c300-4389-915b-f5654b011e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
