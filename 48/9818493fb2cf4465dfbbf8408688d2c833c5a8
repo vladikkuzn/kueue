@@ -1,0 +1,19 @@
+hack/make/verify.mk
+  s_de0bb7c9a098c0::t_9df2ab46d74433 361
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "489818493fb2cf4465dfbbf8408688d2c833c5a8",
+  "prompts": {},
+  "sessions": {
+    "s_de0bb7c9a098c0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-f1f57a86-3b22-47f3-8cd8-c6befaba82ee",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
