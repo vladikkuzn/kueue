@@ -1,0 +1,36 @@
+cmd/experimental/skills/README.md
+  s_2dac124442db33::t_bf0d888a31d57c 20
+  s_2dac124442db33::t_a62129fc651110 59-60
+cmd/experimental/skills/kueue-pr-evidence-timeline/SKILL.md
+  s_2dac124442db33::t_5dc9e049093e15 1-33,60-62,83-85,106-113,117,119-124,126-128,130-136,139-140,142,145-148,150,152-154,158,164,166-167
+  s_2dac124442db33::t_94d36d04ce8363 56-59
+  s_2dac124442db33::t_5287a8b0b2b1a6 125
+  s_2dac124442db33::t_1add4342e9a1d3 36
+  s_2dac124442db33::t_d93a3141e67c05 129
+  s_2dac124442db33::t_130fde2783ca3f 34-35
+  s_fc79e4f708ffc9::t_314d467896b985 37-55,63-82,86-105,114-116,118,137-138,141,143-144,149,151,155-157,159-163,165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cb1d53ac59f5990e221934eebcdb692e035b76ee",
+  "prompts": {},
+  "sessions": {
+    "s_2dac124442db33": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-385c3479-d3e6-4e6a-93bf-0db81667c3ca",
+        "model": "unknown"
+      },
+      "human_author": null
+    },
+    "s_fc79e4f708ffc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6a7c7f77-c300-4389-915b-f5654b011e31",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
