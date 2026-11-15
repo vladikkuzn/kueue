@@ -1,0 +1,32 @@
+cmd/experimental/skills/kueue-pr-evidence-red-green/SKILL.md
+  s_4a95ad3f7d92fd::t_9c87f0e9724ad8 1-10,14-20,23-26,29,35,42,48,50-51,55-56,78-79,81-82,87-88,90-91,112,114,121-123,126,132,138-140,142-146,148-152,154,157,159,161-172
+  s_38b0efb1a01861::t_ec6d9807cf1a4e 62-63
+  s_38b0efb1a01861::t_1847b6ab006924 11-13,21-22,27-28,30-34,36-41,43-47,49,52-54,57-61,64-77,80,83-86,89,92-111,113,115-120,124-125,127-131,133-137,141,147,153,155-156,158,160
+cmd/experimental/skills/README.md
+  s_4a95ad3f7d92fd::t_46b29f297ea0a3 21
+  s_4a95ad3f7d92fd::t_40415553224154 62-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b946de0c799688487ac33aa0d6a9d037ea55a9b7",
+  "prompts": {},
+  "sessions": {
+    "s_38b0efb1a01861": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1dec0-c6c9-7131-bb03-093a3ea79cd5",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": null
+    },
+    "s_4a95ad3f7d92fd": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "agent-2486af4d-aeac-4dff-a25a-6ccaae5d5476",
+        "model": "unknown"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
