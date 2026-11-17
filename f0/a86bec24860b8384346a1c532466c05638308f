@@ -1,0 +1,21 @@
+charts/kueue/README.md
+  s_cfd815494501fb::t_725cf4602e3baa 69,71-76,81-82,85-86,89
+charts/kueue/README.md.gotmpl
+  s_cfd815494501fb::t_725cf4602e3baa 71,73-78,83-84,87-88,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0a86bec24860b8384346a1c532466c05638308f",
+  "prompts": {},
+  "sessions": {
+    "s_cfd815494501fb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ea1f-4e21-7673-9ffe-9b3d868bc303",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
