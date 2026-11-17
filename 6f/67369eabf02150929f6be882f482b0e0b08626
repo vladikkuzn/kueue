@@ -1,0 +1,23 @@
+charts/kueue/values.yaml
+  s_dfce55ba64f4e5::t_cc7df7ddfb9a48 22
+charts/kueue/README.md
+  s_dfce55ba64f4e5::t_51c48a43e21593 76,326
+charts/kueue/README.md.gotmpl
+  s_dfce55ba64f4e5::t_cc7df7ddfb9a48 78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f67369eabf02150929f6be882f482b0e0b08626",
+  "prompts": {},
+  "sessions": {
+    "s_dfce55ba64f4e5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e6fa-44eb-7f00-9be0-8415cd5aa29a",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
