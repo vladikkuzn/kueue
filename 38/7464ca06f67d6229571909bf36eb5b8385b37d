@@ -1,0 +1,30 @@
+charts/kueue/templates/map/manifests.yaml
+  s_cfd815494501fb::t_d93b8f2fea9a50 19,51
+hack/processing-plan.yaml
+  s_cfd815494501fb::t_d93b8f2fea9a50 422
+charts/kueue/tests/mutatingadmissionpolicy_test.yaml
+  s_cfd815494501fb::t_d93b8f2fea9a50 6,16-43
+  s_cfd815494501fb::t_662c59869220e7 44-45
+charts/kueue/README.md
+  s_cfd815494501fb::t_d93b8f2fea9a50 67-83,319
+charts/kueue/values.yaml
+  s_cfd815494501fb::t_d93b8f2fea9a50 22
+charts/kueue/README.md.gotmpl
+  s_cfd815494501fb::t_d93b8f2fea9a50 69-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "387464ca06f67d6229571909bf36eb5b8385b37d",
+  "prompts": {},
+  "sessions": {
+    "s_cfd815494501fb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ea1f-4e21-7673-9ffe-9b3d868bc303",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
