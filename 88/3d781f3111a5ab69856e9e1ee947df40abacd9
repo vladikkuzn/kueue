@@ -1,0 +1,33 @@
+hack/processing-plan.yaml
+  s_cfd815494501fb::t_b23ac355ef8005 422
+  s_cfd815494501fb::t_65c4cf43405ab4 715
+charts/kueue/templates/map/manifests.yaml
+  s_cfd815494501fb::t_b23ac355ef8005 19,51
+charts/kueue/tests/mutatingadmissionpolicy_test.yaml
+  s_5eccdee7b6826e::t_1612daaf5abeeb 1-5,7-40
+  s_cfd815494501fb::t_b23ac355ef8005 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "883d781f3111a5ab69856e9e1ee947df40abacd9",
+  "prompts": {},
+  "sessions": {
+    "s_5eccdee7b6826e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e94d-b68b-78b0-9eb0-89669d81a1fb",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_cfd815494501fb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ea1f-4e21-7673-9ffe-9b3d868bc303",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
