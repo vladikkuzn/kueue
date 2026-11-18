@@ -1,0 +1,32 @@
+cmd/experimental/skills/README.md
+  s_ff840b90b1d407::t_5c36738c65a906 22,66
+  s_cbcd2830e23ac9::t_8376ea0ab65479 26,29
+  s_ff840b90b1d407::t_b2196ec0a5d763 65
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/SKILL.md
+  s_ff840b90b1d407::t_5c36738c65a906 1-19,24-31,34-42,44-46,49-50,68-70,74-91,97-139,142-160,162-172,178-210
+  s_ff840b90b1d407::t_b2196ec0a5d763 20-23,32-33,43,47-48,51-67,71-73,92-96,140-141,161,173-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "18ab549b1ae90d7db267bca9613139ff2468251f",
+  "prompts": {},
+  "sessions": {
+    "s_cbcd2830e23ac9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e046a510-a71e-4584-9641-44cf7006870e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_ff840b90b1d407": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e94f-97ba-79b1-a4b9-c2617860c855",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
