@@ -1,0 +1,38 @@
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_0981eac0a8e943::t_22cd39d1e527a7 498,544,551-579
+  s_0981eac0a8e943::t_7126722f12a1b4 580-581
+pkg/util/testingjobs/statefulset/wrappers.go
+  s_0981eac0a8e943::t_69d66880fac4b5 267-272
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_0981eac0a8e943::t_22cd39d1e527a7 229-316
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_0981eac0a8e943::t_22cd39d1e527a7 2231-2233,2236-2256,2259-2269,2271-2299,2301-2308,2310,2312-2315,2317,2319,2322
+  s_7bbcf335f0f823::t_ebf0197b3bc589 2235
+  s_0981eac0a8e943::t_5b922763e0f0dd 2234,2258,2300,2309,2311,2316
+  s_0981eac0a8e943::t_3ebf177c5e1ca9 2257,2270,2318
+  s_7bbcf335f0f823::t_b321aac4d19993 2320-2321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "846275debc9c1007cf39ea03ead9439a4388e68e",
+  "prompts": {},
+  "sessions": {
+    "s_0981eac0a8e943": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1edf1-1e9b-75d3-9cb8-c28e7bff94a3",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_7bbcf335f0f823": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ee19-7805-79f2-9d57-1350ad0387a6",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
