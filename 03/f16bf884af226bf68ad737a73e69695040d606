@@ -1,0 +1,29 @@
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_7643db320497fa::t_18ca196626f921 312-316,318
+  s_7643db320497fa::t_d12e85557218db 321
+  s_7643db320497fa::t_8194f28785ffb3 229,244,248-250,254-255,259-264,268,270-271,277-278,280,286-289,291,294-295,303-311,317,320,322-325
+  s_7643db320497fa::t_07d503d5f472e0 252,266,281-282,292
+  s_7643db320497fa::t_60cd5d7254ba6f 319
+pkg/util/testing/v1beta2/wrappers.go
+  s_7643db320497fa::t_8194f28785ffb3 640-644
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_test.go
+  s_7643db320497fa::t_8194f28785ffb3 2259
+pkg/util/testingjobs/statefulset/wrappers.go
+  s_7643db320497fa::t_8194f28785ffb3 261-266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "03f16bf884af226bf68ad737a73e69695040d606",
+  "prompts": {},
+  "sessions": {
+    "s_7643db320497fa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ee71-7f4a-7fb2-8b9c-e5457bb4fe3a",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
