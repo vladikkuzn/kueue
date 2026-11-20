@@ -1,0 +1,25 @@
+pkg/controller/admissionchecks/provisioning/controller.go
+  s_f126d912c85c00::t_b1675de488ef51 448-449
+pkg/controller/admissionchecks/provisioning/controller_test.go
+  s_f126d912c85c00::t_4e0bb883399de7 732,734-735,930-957
+test/integration/singlecluster/controller/admissionchecks/provisioning/provisioning_ephemeral_containers_test.go
+  s_f126d912c85c00::t_9c4e222ca7e276 1-103,108-234
+test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
+  s_f126d912c85c00::t_8fba2d45bb7961 38,81,94-97,146-150,152-156,158,160-161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f272c5796faabebb7d21dbc0d1472f09873b2b3",
+  "prompts": {},
+  "sessions": {
+    "s_f126d912c85c00": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1ea07-caa9-7e41-a370-4d93f653e9ab",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
