@@ -1,0 +1,33 @@
+hack/testing/fetch-prow-merged-coverage.sh
+  s_c1ca85c03d31ec::t_763cdc3e9d76ac 34-35
+  s_c1ca85c03d31ec::t_c357ee05fba9ab 59,61,106,132,139-140,147
+hack/testing/fetch-prow-merged-coverage_test.sh
+  s_c1ca85c03d31ec::t_c357ee05fba9ab 50,52-53,57-60,64,67,84,168-171
+  s_15aa13911134a2::t_16fe931146a9e5 172
+.github/workflows/codecov-prow.yaml
+  s_c1ca85c03d31ec::t_c357ee05fba9ab 112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e47124f40ec0481c624411847c4774e94ee0b282",
+  "prompts": {},
+  "sessions": {
+    "s_15aa13911134a2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f6e6-e6fc-76e2-9105-a47f2cea64a3",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_c1ca85c03d31ec": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f851-3dd7-7041-879e-e07939a6830c",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
