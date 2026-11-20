@@ -2,6 +2,9 @@ pkg/controller/admissionchecks/provisioning/controller_test.go
   s_f126d912c85c00::t_4e0bb883399de7 926-928
 test/integration/singlecluster/controller/admissionchecks/provisioning/suite_test.go
   s_f126d912c85c00::t_8fba2d45bb7961 38,137,139-140
+test/integration/multikueue/pod_test.go
+  s_bb10c7403f0909::t_23426da5c2b8be 40,47-51,55,175-189,191-193,197-228
+  s_34a9aec23cfe66::t_b43fe39c52f269 196
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -9,6 +12,22 @@ test/integration/singlecluster/controller/admissionchecks/provisioning/suite_tes
   "base_commit_sha": "b743a168b3625c3b13eff2cd3f0a3f326d778969",
   "prompts": {},
   "sessions": {
+    "s_34a9aec23cfe66": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fa69-e956-7732-85f5-6cedb8d3066e",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_bb10c7403f0909": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1fa68-493a-7de1-8aed-a5c8ae44c6b1",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
     "s_f126d912c85c00": {
       "agent_id": {
         "tool": "codex",
