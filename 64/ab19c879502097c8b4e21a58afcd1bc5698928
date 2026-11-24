@@ -1,0 +1,48 @@
+README.md
+  s_2a813e09c835fc::t_af15a8ee0e6ed7 10,151-152
+  s_a3c4381e0b60d0::t_05eaa502f9ff28 6-8,153-155,158
+  s_c1698830a37ac9::t_e4e2e6bda3d4fd 5,9
+  s_a3c4381e0b60d0::t_2ad1c8065363d6 156-157
+  s_a3c4381e0b60d0::t_12b26929db0c1e 159-161
+  s_82c116f20e59fd::t_708f46bd70fec6 162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "64ab19c879502097c8b4e21a58afcd1bc5698928",
+  "prompts": {},
+  "sessions": {
+    "s_2a813e09c835fc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20d40-7585-7372-89b1-1dbed916837f",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_82c116f20e59fd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e22-69a1-7af2-91ef-f2fccb6b33d4",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_a3c4381e0b60d0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e0b-a488-7291-b794-75103278f048",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_c1698830a37ac9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20d62-a1ff-7f32-ac52-ef3ef3b7f5ca",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
