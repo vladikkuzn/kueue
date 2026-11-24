@@ -1,0 +1,51 @@
+cmd/experimental/skills/README.md
+  s_ff840b90b1d407::t_5c36738c65a906 22,66
+  s_cbcd2830e23ac9::t_8376ea0ab65479 26,29
+  s_ff840b90b1d407::t_b2196ec0a5d763 65
+cmd/experimental/skills/kueue-pr-evidence-perf-delta/SKILL.md
+  s_f637e581a6c08f::t_ec629455c33f1e 35,51-53,125,194,196-197
+  s_e2517c27e045d3::t_96b4b5513c7a03 124,195
+  s_e2517c27e045d3::t_a59c7ed8a4f92d 23,26-27,30,37,47-50,54-59,65,95-97,113-116,161,214-215,217
+  s_ff840b90b1d407::t_5c36738c65a906 1-19,24-25,28-29,32-34,36,38-40,42-44,60-61,79-81,85-94,98-104,110-112,117-123,126-154,157-160,162-175,177-187,193,198-213,216,218-232
+  s_ff840b90b1d407::t_b2196ec0a5d763 20-22,31,41,45-46,62-64,66-78,82-84,105-109,155-156,176,188-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "09e7fea808d6f2c744f61bd51ff4517ffdda3460",
+  "prompts": {},
+  "sessions": {
+    "s_cbcd2830e23ac9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e046a510-a71e-4584-9641-44cf7006870e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    },
+    "s_e2517c27e045d3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e17-c23e-74e1-8036-a19674bc92e4",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": null
+    },
+    "s_f637e581a6c08f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20e2f-fb8f-70f2-b9d8-d8616efe1bf4",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": null
+    },
+    "s_ff840b90b1d407": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e94f-97ba-79b1-a4b9-c2617860c855",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
