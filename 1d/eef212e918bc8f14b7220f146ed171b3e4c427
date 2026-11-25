@@ -1,0 +1,21 @@
+README.md
+  s_89e25af8153efe::t_1fe32111b79929 123-124,127-131
+  s_89e25af8153efe::t_c0c40077a5797d 121-122,125-126
+  s_89e25af8153efe::t_4558e00477a5cc 132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1deef212e918bc8f14b7220f146ed171b3e4c427",
+  "prompts": {},
+  "sessions": {
+    "s_89e25af8153efe": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2127a-ba54-77c1-b8c5-a6de5e3a485c",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
