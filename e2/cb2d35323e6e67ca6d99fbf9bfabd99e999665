@@ -1,0 +1,19 @@
+README.md
+  s_d55c06ec2946ff::t_f500c5490c39fb 121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e2cb2d35323e6e67ca6d99fbf9bfabd99e999665",
+  "prompts": {},
+  "sessions": {
+    "s_d55c06ec2946ff": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a214f4-f1a3-76b3-b907-e393018ebdbc",
+        "model": "gpt-6.1-terra"
+      },
+      "human_author": "vladikkuzn <vladikkuzn1@gmail.com>"
+    }
+  }
+}
